@@ -1,0 +1,20 @@
+/* orders.css — Order list and order detail styles
+ * Styles specific to orders.html and order-detail.html.
+ *
+ * Order list:
+ *   .order-list-row          : single row in the orders list
+ *   .order-list-row__status  : status badge position
+ *   .order-list-row__meta    : client name, phone, document type
+ *   .order-list-row__balance : balance_due indicator (red if > 0)
+ *
+ * Order detail sections:
+ *   .order-detail            : outer wrapper
+ *   .order-section           : collapsible section (client, quote, payments, etc.)
+ *   .order-section__title    : section heading with expand/collapse toggle
+ *   .timeline                : lab interactions and event log chronological display
+ *   .timeline-entry          : single event or lab interaction entry
+ *   .timeline-entry__actor   : operator vs system indicator
+ *   .layout-version          : single layout version card
+ *   .layout-version--active  : current version highlight
+ *   .event-log               : read-only event history list
+ */

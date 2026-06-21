@@ -1,0 +1,13 @@
+/* dashboard.css — Attention panel styles
+ * Styles specific to dashboard.html and dashboard.js.
+ *
+ * Sections:
+ *   .attention-panel         : outer container
+ *   .attention-section       : one category block (OVERDUE, DUE TODAY, etc.)
+ *   .attention-section--overdue, --due-today, --action, --debt, --stale, --tasks
+ *     : colour-coded left border and header using --color-* tokens from main.css
+ *   .attention-section__header : section title + item count badge
+ *   .attention-row           : single flagged order row within a section
+ *   .attention-row__label    : the specific flag reason shown next to the order
+ *   .attention-empty         : shown when no items require attention ("All clear")
+ */

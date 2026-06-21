@@ -1,0 +1,17 @@
+/* components.css — Reusable UI components
+ * Used across all pages. Any style defined here must be generic enough
+ * to be used in at least two different contexts.
+ *
+ * Components:
+ *   .btn, .btn-primary, .btn-secondary, .btn-danger, .btn-sm
+ *   .badge, .badge-status-* (NEW, WAITING_PAYMENT, IN_LAB, WAITING_CLIENT_APPROVAL, WAITING_ORIGINAL, READY_FOR_DELIVERY, COMPLETED, CANCELLED)
+ *   .badge-priority-* (high, medium, low)
+ *   .badge-sync-* (synced, pending, conflict, error)
+ *   .card, .card-header, .card-body
+ *   .table, .table-row, .table-cell
+ *   .modal, .modal-overlay, .modal-content, .modal-actions
+ *   .alert, .alert-error, .alert-warning, .alert-success
+ *   .spinner (loading indicator)
+ *   .empty-state (no results message)
+ *   .confirm-dialog (used for Design Principle 7 confirmations)
+ */

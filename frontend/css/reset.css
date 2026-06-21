@@ -1,0 +1,5 @@
+/* reset.css — Browser normalisation
+ * Loaded first on every page before any other stylesheet.
+ * Removes default margins, paddings, and inconsistent browser defaults.
+ * Sets box-sizing: border-box globally.
+ */

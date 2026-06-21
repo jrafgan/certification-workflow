@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — Certification Workflow</title>
+  <link rel="stylesheet" href="../css/reset.css">
+  <link rel="stylesheet" href="../css/main.css">
+  <link rel="stylesheet" href="../css/layout.css">
+  <link rel="stylesheet" href="../css/components.css">
+  <link rel="stylesheet" href="../css/dashboard.css">
+</head>
+<body>
+
+  <!--
+    dashboard.html — Main attention view
+    Answers: "What requires my attention today?"
+
+    Sections (in priority order):
+      OVERDUE        — deadlines passed, no action recorded
+      DUE TODAY      — deadlines hitting today
+      ACTION NEEDED  — required step not yet taken
+      DEBT           — READY_FOR_DELIVERY orders with balance_due > 0
+      STALE          — NEW or WAITING_PAYMENT orders with no movement > 3 days
+      OPEN TASKS     — open and unsnoozed tasks across all orders
+
+    Data source: GET /api/dashboard/attention
+  -->
+
+  <script src="../js/utils.js"></script>
+  <script src="../js/api.js"></script>
+  <script src="../js/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+# Keep build context small and never bake secrets/sessions into images.
+**/node_modules
+**/.git
+**/.gitignore
+**/npm-debug.log
+
+# Secrets & runtime state — provided at runtime via env/volumes, never in the image.
+.env
+.env.*
+!.env.production.example
+backend/.env
+backend/.env.*
+keys/
+backend/keys/
+backend/.wwebjs_auth/
+backend/.wwebjs_cache/
+backend/whatsapp_media/
+backend/uploads/layouts/*
+backend/uploads/originals/*
+backend/logs/
+
+# Dev-only
+**/*.test.js.snap
+.idea/
+.vscode/
+*.md
+!README.md

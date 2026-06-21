@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Detail — Certification Workflow</title>
+  <link rel="stylesheet" href="../css/reset.css">
+  <link rel="stylesheet" href="../css/main.css">
+  <link rel="stylesheet" href="../css/layout.css">
+  <link rel="stylesheet" href="../css/components.css">
+  <link rel="stylesheet" href="../css/orders.css">
+  <link rel="stylesheet" href="../css/forms.css">
+</head>
+<body>
+
+  <!--
+    order-detail.html — Full single order view
+
+    Displays and handles all order lifecycle actions:
+      - Client information (view + edit)
+      - Quote (view + set)
+      - Status badge and transition controls
+      - Payments (record, void)
+      - Lab interactions (log contact, log reminder, set deadline)
+      - Layouts (record receipt, mark sent, record client decision)
+      - Original document (record receipt, mark sent)
+      - Order closure and cancellation
+      - Full event log (read-only, chronological)
+      - Open tasks for this order
+
+    All state-changing actions display a confirmation dialog before submitting.
+    This is the UI enforcement of Design Principle 7.
+
+    Data source: GET /api/orders/:id
+    Order ID is read from the URL query string: ?id=<orderId>
+  -->
+
+  <script src="../js/utils.js"></script>
+  <script src="../js/api.js"></script>
+  <script src="../js/order-detail.js"></script>
+</body>
+</html>

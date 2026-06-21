@@ -1,0 +1,15 @@
+/* forms.css — Form input styles
+ * Used on orders.html (new order form) and order-detail.html (inline edit forms).
+ *
+ * Elements:
+ *   .form-group              : label + input wrapper
+ *   .form-label              : field label
+ *   .form-input              : text, number, tel inputs
+ *   .form-select             : select dropdowns
+ *   .form-textarea           : multi-line text
+ *   .form-date               : date inputs
+ *   .form-input--error       : red border on validation failure
+ *   .form-error-message      : error text beneath the field
+ *   .form-actions            : button row at the bottom of a form
+ *   .form-hint               : small help text below a field
+ */

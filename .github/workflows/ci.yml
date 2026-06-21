@@ -1,0 +1,51 @@
+name: CI
+
+# Runs on every push/PR: fast unit suites (no DB needed) + validates the Docker build.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # Pure-core suites — deterministic, no MongoDB / no network.
+      - name: Unit tests
+        run: |
+          for t in pi-calculation payment-recognition document-understanding \
+                   extraction-review draft-email lead-recovery workflow-audit \
+                   lead-intent lead-conversion phone-mismatch; do
+            echo "── $t ──"; node tests/$t.test.js;
+          done
+
+  docker-build:
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: certification-workflow-backend:ci
+      - name: Build WhatsApp image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./deploy/Dockerfile.whatsapp
+          push: false
+          tags: certification-workflow-whatsapp:ci

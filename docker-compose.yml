@@ -1,0 +1,115 @@
+# Production stack for AdminVPS (or any Docker host — provider-independent).
+#
+#   nginx (80/443, SSL)  ──►  backend (API + Control Center)  ──►  mongo
+#   certbot (renewals)                 whatsapp (agent, optional profile)
+#
+# One source of truth for Mongo creds (.env) → the connection string is built here so
+# the app and the WhatsApp agent always agree. Only nginx publishes ports; everything
+# else talks over the private `internal` network.
+#
+# Bring up core:      docker compose up -d --build
+# Add WhatsApp agent:  docker compose --profile whatsapp up -d --build
+name: certification-workflow
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # No published port — Mongo is reachable only inside the Docker network.
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: certification-workflow-backend:latest
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Built from the single source of truth above (authSource=admin for the root user).
+      MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongo:27017/${MONGO_DB:-certification-workflow}?authSource=admin
+    depends_on:
+      mongo: { condition: service_healthy }
+    volumes:
+      - uploads:/app/backend/uploads
+      - ./keys:/app/backend/keys:ro          # Google service-account key (place on server)
+    networks: [internal]
+    expose: ["3000"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  whatsapp:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.whatsapp
+    image: certification-workflow-whatsapp:latest
+    restart: unless-stopped
+    profiles: ["whatsapp"]                    # opt-in: needs a one-time QR scan from logs
+    env_file: [.env]
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongo:27017/${MONGO_DB:-certification-workflow}?authSource=admin
+      WHATSAPP_SESSION_PATH: /data/wwebjs_auth
+      WHATSAPP_MEDIA_DIR: /data/whatsapp_media
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+    depends_on:
+      mongo: { condition: service_healthy }
+    volumes:
+      - wa_auth:/data/wwebjs_auth             # persisted login — survives restarts
+      - wa_media:/data/whatsapp_media
+    networks: [internal]
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on: [backend]
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot
+    networks: [internal]
+
+  certbot:
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    # Re-check for renewal every 12h; nginx picks up renewed certs on its next reload.
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  mongo_data:
+  mongo_config:
+  uploads:
+  wa_auth:
+  wa_media:
+  certbot_certs:
+  certbot_www:

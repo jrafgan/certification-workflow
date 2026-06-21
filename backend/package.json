@@ -1,0 +1,57 @@
+{
+  "name": "certification-workflow-backend",
+  "version": "0.1.0",
+  "description": "Certification Workflow Management System — Backend API",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test:gmail": "node scripts/test-gmail.js",
+    "test:workflow": "node tests/workflow-detection.test.js",
+    "test:whatsapp": "node tests/whatsapp-v1.test.js",
+    "test:whatsapp-ingest": "node tests/whatsapp-ingest.test.js",
+    "test:whatsapp-lookup": "node tests/whatsapp-lookup.test.js",
+    "test:whatsapp-application": "node tests/whatsapp-application-match.test.js",
+    "test:whatsapp-test-mode": "node tests/whatsapp-test-mode.test.js",
+    "test:whatsapp-lid": "node tests/whatsapp-lid-diagnostics.test.js",
+    "test:whatsapp-lid-resolution": "node tests/whatsapp-lid-resolution.test.js",
+    "test:knowledge-base": "node tests/knowledge-base.test.js",
+    "test:kb-operator-seed": "node tests/kb-operator-seed.test.js",
+    "test:phone-mismatch": "node tests/phone-mismatch.test.js",
+    "test:pi-calc": "node tests/pi-calculation.test.js",
+    "test:payment-recognition": "node tests/payment-recognition.test.js",
+    "test:document-understanding": "node tests/document-understanding.test.js",
+    "test:extraction-review": "node tests/extraction-review.test.js",
+    "test:draft-email": "node tests/draft-email.test.js",
+    "test:lead-recovery": "node tests/lead-recovery.test.js",
+    "test:workflow-audit": "node tests/workflow-audit.test.js",
+    "test:lead-intent": "node tests/lead-intent.test.js",
+    "test:lead-conversion": "node tests/lead-conversion.test.js",
+    "whatsapp:listen": "node scripts/whatsapp-listen.js",
+    "whatsapp:live-test": "node scripts/whatsapp-live-test.js",
+    "whatsapp:lid-diagnostics": "node scripts/whatsapp-lid-diagnostics.js",
+    "kb:build": "node scripts/kb-build.js",
+    "kb:seed-operator": "node scripts/kb-seed-operator.js",
+    "verify:sheets": "node scripts/verify-sheets.js",
+    "verify:new-form": "node scripts/verify-new-form.js",
+    "scan:lab-attention": "node scripts/scan-lab-attention.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "connect-mongo": "^5.0.0",
+    "dotenv": "^16.0.0",
+    "express": "^4.18.0",
+    "express-session": "^1.17.0",
+    "googleapis": "^126.0.0",
+    "mongoose": "^7.0.0",
+    "multer": "^1.4.4",
+    "node-cron": "^3.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.34.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  }
+}

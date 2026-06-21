@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Declarations — Certification Workflow</title>
+  <link rel="stylesheet" href="../css/reset.css">
+  <link rel="stylesheet" href="../css/main.css">
+  <link rel="stylesheet" href="../css/layout.css">
+  <link rel="stylesheet" href="../css/components.css">
+  <link rel="stylesheet" href="../css/orders.css">
+</head>
+<body>
+
+  <!--
+    declarations.html — Declaration records view
+
+    Shows all Declaration records with their Google Sheets sync status.
+    Sync status badges: synced (green), pending (yellow), conflict (red), error (red).
+
+    Conflict resolution:
+      When sync_status = conflict, the operator can see both the system
+      value and the sheet value side by side and choose which to keep.
+      Resolution calls PATCH /api/declarations/:id/resolve-conflict.
+
+    Data source: GET /api/declarations (filter: ?sync_status=)
+  -->
+
+  <script src="../js/utils.js"></script>
+  <script src="../js/api.js"></script>
+  <script src="../js/declarations.js"></script>
+</body>
+</html>

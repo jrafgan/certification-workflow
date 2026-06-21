@@ -1,0 +1,7 @@
+/* layout.css — Page shell and navigation
+ * Defines the overall page structure shared across all views:
+ *   - Top navigation bar (app title, nav links, current page indicator)
+ *   - Main content area (max-width, padding)
+ *   - Page header (title + action button row)
+ *   - Responsive behaviour for small screens
+ */

@@ -1,0 +1,18 @@
+/* main.css — Global styles
+ * Defines CSS custom properties (design tokens) used across all pages:
+ *   --color-* : palette (background, surface, text, borders, status colours)
+ *   --space-* : spacing scale (4px base)
+ *   --font-*  : font family, size scale, weight
+ *   --radius-*: border radius values
+ *   --shadow-*: box shadow levels
+ *
+ * Status colour tokens (used by components.css badges and dashboard sections):
+ *   --color-overdue   : red
+ *   --color-due-today : orange
+ *   --color-action    : yellow
+ *   --color-debt      : deep orange
+ *   --color-stale     : grey
+ *   --color-ok        : green
+ *
+ * Base element styles: body, headings, links, paragraphs.
+ */

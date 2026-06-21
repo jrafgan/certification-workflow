@@ -1,0 +1,48 @@
+name: Deploy to AdminVPS
+
+# CD: GitHub → GitHub Actions → AdminVPS → Docker stack.
+# SSH-based pull-and-rebuild — works on ANY VPS (provider-independent). Triggered
+# manually or on a release tag, AFTER CI passes. Never deploys a red build.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment: production   # add required reviewers here for a manual approval gate
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            cd ${{ secrets.APP_DIR || '/opt/certification-workflow' }}
+            git fetch --all --prune
+            git checkout ${{ github.ref_name }}
+            git pull --ff-only
+            docker compose pull || true
+            docker compose up -d --build
+            docker image prune -f
+            # Wait for health, then report.
+            for i in $(seq 1 20); do
+              if docker compose exec -T backend curl -fsS http://127.0.0.1:3000/health >/dev/null 2>&1; then
+                echo "Backend healthy"; exit 0; fi; sleep 3;
+            done
+            echo "Backend did not become healthy"; docker compose logs --tail=50 backend; exit 1
+
+# Required GitHub repo secrets:
+#   SSH_HOST   — AdminVPS IP / hostname
+#   SSH_USER   — deploy user (member of the docker group)
+#   SSH_KEY    — private key whose public half is in the server's authorized_keys
+#   SSH_PORT   — optional (default 22)
+#   APP_DIR    — optional (default /opt/certification-workflow)

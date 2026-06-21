@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Центр управления</title>
+  <link rel="stylesheet" href="/app/css/control-center.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">⚙ Центр управления</div>
+    <nav class="tabs" id="tabs">
+      <button data-screen="dashboard" class="active">Главная</button>
+      <button data-screen="inbox">Входящие задачи</button>
+      <button data-screen="drafts">Черновики</button>
+      <button data-screen="pipeline">Воронка клиентов</button>
+      <button data-screen="chat">Чат с агентом</button>
+      <button data-screen="kb">База знаний</button>
+      <button data-screen="audit">Журнал действий</button>
+      <button data-screen="users" data-admin="1">Пользователи</button>
+    </nav>
+    <div class="opbar">
+      <span id="dbstatus" class="db unknown">База ?</span>
+      <span id="whoami" class="whoami"></span>
+      <button id="refresh" title="Обновить">↻</button>
+      <button id="logout" title="Выйти">Выйти</button>
+    </div>
+  </header>
+
+  <main id="screens">
+    <!-- Главная -->
+    <section id="screen-dashboard" class="screen active">
+      <h2>Главная</h2>
+      <p class="muted">Что требует внимания сегодня</p>
+      <div id="dash-tiles" class="cards"></div>
+      <h3>Источники данных</h3>
+      <div id="dash-sources" class="sources"></div>
+    </section>
+
+    <!-- Входящие задачи -->
+    <section id="screen-inbox" class="screen">
+      <h2>Входящие задачи <span class="muted">— всё, что ждёт решения</span></h2>
+      <div id="inbox-list" class="stream"></div>
+    </section>
+
+    <!-- Черновики -->
+    <section id="screen-drafts" class="screen">
+      <h2>Черновики</h2>
+      <div id="drafts-groups"></div>
+    </section>
+
+    <!-- Воронка клиентов -->
+    <section id="screen-pipeline" class="screen">
+      <h2>Воронка клиентов</h2>
+      <div id="pipeline-board" class="board"></div>
+    </section>
+
+    <!-- Чат с агентом -->
+    <section id="screen-chat" class="screen">
+      <h2>Чат с агентом <span class="muted">— отвечает по сохранённым данным</span></h2>
+      <div class="chat-ctx" id="chat-ctx">Задача не выбрана. Нажмите «?» на карточке во «Входящих» или в «Черновиках», либо выберите ниже.</div>
+      <select id="chat-item"></select>
+      <div class="chat-quick">
+        <button data-q="почему">Почему?</button>
+        <button data-q="покажи доказательства">Показать основания</button>
+        <button data-q="пересчитай">Пересчитать</button>
+        <button data-q="объясни предложение">Объяснить предложение</button>
+      </div>
+      <div class="chat-row">
+        <input id="chat-input" placeholder="Спросите агента…" />
+        <button id="chat-send">Спросить</button>
+      </div>
+      <div id="chat-log" class="chat-log"></div>
+    </section>
+
+    <!-- База знаний -->
+    <section id="screen-kb" class="screen">
+      <h2>База знаний <span class="muted">— одобренные записи</span></h2>
+      <div id="kb-admin" class="kb-admin" data-admin="1"></div>
+      <div id="kb-list" class="kb"></div>
+    </section>
+
+    <!-- Журнал действий -->
+    <section id="screen-audit" class="screen">
+      <h2>Журнал действий <span class="muted">— кто что изменил</span></h2>
+      <div id="audit-list"></div>
+    </section>
+
+    <!-- Пользователи (только администратор) -->
+    <section id="screen-users" class="screen">
+      <h2>Пользователи <span class="muted">— только для администратора</span></h2>
+      <form id="user-form" class="user-form">
+        <input id="u-login" placeholder="логин" required />
+        <input id="u-name" placeholder="имя" />
+        <input id="u-pass" type="password" placeholder="пароль" required />
+        <select id="u-role"><option value="operator">Оператор</option><option value="administrator">Администратор</option></select>
+        <button type="submit">Создать</button>
+      </form>
+      <div id="users-list"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="/app/js/control-center.js"></script>
+</body>
+</html>
