@@ -83,14 +83,17 @@ function leadDraftCard(d) {
 function emailDraftCard(d) {
   return { type: 'email_draft', id: String(d._id), title: `Письмо лаборатории · ${EMAIL_KIND_RU[d.draft_type] || d.draft_type}`, subtitle: `${d.to_email} · ${d.client_name || ''}`,
     body: `${d.subject}\n\n${d.body}`, reason: d.reason, evidence: evidenceList(d.evidence), confidence: d.confidence_band,
-    editable: true, actions: ['approve', 'reject', 'edit'], created_at: d.created_at, state: d.state };
+    editable: true, actions: ['approve', 'reject', 'edit'], created_at: d.created_at, state: d.state, order_id: d.order_id ? String(d.order_id) : null };
 }
 function auditCard(d) {
   return { type: 'audit', id: String(d._id), title: `Статус заказа · ${d.client_name || d.sheet_row_id || ''}`,
     subtitle: `«${d.current_status}» → «${d.proposed_status || 'без изменений'}»`,
     body: d.reasoning, reason: d.reasoning, evidence: evidenceList(d.evidence).concat((d.findings || []).map(f => f.detail)),
     confidence: d.confidence_band, editable: false, actions: d.proposed_status ? ['approve', 'reject'] : ['acknowledge', 'reject'],
-    created_at: d.created_at, state: d.state };
+    created_at: d.created_at, state: d.state,
+    // Status-audit card (Task 5): discrete fields for the Current | Evidence | Suggested | Confidence layout.
+    audit_kind: 'status_audit', current_status: d.current_status, proposed_status: d.proposed_status || null,
+    order_id: d.order_id ? String(d.order_id) : null };
 }
 function reviewCard(d) {
   return { type: 'extraction_review', id: String(d._id), title: `${d.doc_type === 'receipt' ? 'Проверка оплаты' : 'Проверка документа'}`,
@@ -106,7 +109,7 @@ function packageCard(d) {
 function recoveryCard(d) {
   return { type: 'lead_recovery', id: String(d._id), title: `Возврат клиента · ${d.client_name || ''}`, subtitle: `важность: ${d.severity}`,
     body: d.proposed_text, reason: d.reason, evidence: evidenceList(d.evidence), confidence: d.confidence_band, editable: false,
-    actions: ['approve', 'reject'], created_at: d.created_at, state: d.state };
+    actions: ['approve', 'reject'], created_at: d.created_at, state: d.state, order_id: d.order_id ? String(d.order_id) : null };
 }
 
 // ─── Agent Inbox: unified recent stream across all engines ───────────────────
@@ -350,7 +353,123 @@ async function auditLog({ limit = 100 } = {}) {
   return { db_connected: true, entries: await audit.list({ limit }) };
 }
 
+// ─── Attention queue + Critical Issues (operational control center) ──────────
+const MS_DAY = 86_400_000;
+function _daysSince(d, now) { return d == null ? null : Math.floor((now - new Date(d).getTime()) / MS_DAY); }
+function _latest(a) { return Array.isArray(a) && a.length ? a[a.length - 1] : null; }
+const _ACTIVE = ['Запустить', 'Ждем макет', 'На согласовании', 'Ждем оригинал', 'Оригинал получен'];
+const SEV_RANK = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+const CONF_RANK = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+
+// PURE: the most dangerous condition(s) for one order — "what is most dangerous for the
+// business" (lab overdue, original overdue, approval overdue, paid-but-not-launched,
+// client waiting too long). One order yields at most one specific danger (+ a generic
+// long-idle flag only if nothing specific fired). Exported for testing.
+function orderDangers(order = {}, now = Date.now()) {
+  const st = String(order.status || '').trim();
+  const li = _latest(order.lab_interactions);
+  const layout = _latest(order.layouts);
+  const original = _latest(order.originals);
+  const client = order.client?.companyName || order.client?.name || 'клиент';
+  const ref = order.sheet_row_id ? `order_row:${order.sheet_row_id}` : `order:${order._id}`;
+  const oid = String(order._id);
+  const layoutSla = order.laboratory?.expectedLayoutDays || 5;
+  const origSla = order.laboratory?.expectedOriginalDays || 10;
+  const out = [];
+  const add = (type, severity, label, detail) => out.push({ type, severity, label, detail, order_id: oid, ref });
+
+  if (st === 'Запустить') {
+    const paid = (order.payments || []).some(p => !p.voided && (p.amount || 0) > 0);
+    const idle = _daysSince(order.updated_at || order.created_at, now);
+    if (paid && !(li && li.sent_at) && idle != null && idle >= 2)
+      add('paid_not_launched', 'HIGH', 'Оплата получена, но не запущено', `«${client}»: оплачено, но заявка в лабораторию не отправлена (${idle} дн.)`);
+  } else if (st === 'Ждем макет' && li && li.sent_at) {
+    const w = _daysSince(li.sent_at, now);
+    if (w != null && w > layoutSla) add('lab_overdue', 'HIGH', 'Лаборатория задерживает макет', `«${client}»: ждём макет ${w} дн. (SLA ${layoutSla})`);
+  } else if (st === 'Ждем оригинал') {
+    const due = order.deadlines?.original_expected;
+    const anchor = due || li?.layout_received_at || li?.sent_at;
+    const over = due ? now > new Date(due).getTime() : (_daysSince(anchor, now) != null && _daysSince(anchor, now) > origSla);
+    if (over) add('original_overdue', 'HIGH', 'Оригинал просрочен', `«${client}»: оригинал не получен (${_daysSince(anchor, now)} дн.)`);
+  } else if (st === 'На согласовании') {
+    const due = order.deadlines?.client_response_due;
+    const anchor = due || layout?.sent_to_client_at || order.updated_at;
+    const decided = layout?.client_decision;
+    const over = !decided && (due ? now > new Date(due).getTime() : (_daysSince(anchor, now) != null && _daysSince(anchor, now) > 3));
+    if (over) add('approval_overdue', 'MEDIUM', 'Клиент не согласовал макет', `«${client}»: на согласовании ${_daysSince(anchor, now)} дн.`);
+  }
+
+  // Generic: active order with no specific danger but very long idle.
+  if (out.length === 0 && _ACTIVE.includes(st)) {
+    const idle = _daysSince(order.updated_at || order.created_at, now);
+    if (idle != null && idle >= 14) add('client_waiting_long', 'MEDIUM', 'Заказ давно без движения', `«${client}»: ${idle} дн. без изменений (статус «${st}»)`);
+  }
+  return out;
+}
+
+// PURE: the 6-step client timeline for one order, each step done|current|pending.
+function orderTimelineSteps(order = {}) {
+  const st = String(order.status || '').trim();
+  const li = _latest(order.lab_interactions), layout = _latest(order.layouts), original = _latest(order.originals);
+  const paid = (order.payments || []).some(p => !p.voided && (p.amount || 0) > 0);
+  const past = (set) => set.includes(st);
+  const reached = {
+    application: true,
+    payment:  paid || past(['Запустить', 'Ждем макет', 'На согласовании', 'Ждем оригинал', 'Оригинал получен', 'Завершен']),
+    lab:      !!(li && li.sent_at) || past(['Ждем макет', 'На согласовании', 'Ждем оригинал', 'Оригинал получен', 'Завершен']),
+    approval: (layout && layout.client_decision === 'approved') || past(['Ждем оригинал', 'Оригинал получен', 'Завершен']),
+    original: !!(original && original.received_at) || past(['Оригинал получен', 'Завершен']),
+    complete: st === 'Завершен' || !!(original && original.sent_to_client_at),
+  };
+  const keys = ['application', 'payment', 'lab', 'approval', 'original', 'complete'];
+  const labels = { application: 'Заявка', payment: 'Оплата', lab: 'Лаборатория', approval: 'Согласование', original: 'Оригинал', complete: 'Завершено' };
+  let currentIdx = keys.findIndex(k => !reached[k]);
+  if (currentIdx === -1) currentIdx = keys.length;
+  return keys.map((k, i) => ({ key: k, label: labels[k], state: reached[k] ? 'done' : (i === currentIdx ? 'current' : 'pending') }));
+}
+
+// DB: the attention screen — critical issues + the prioritized "needs attention" queue +
+// waiting/completed bucket counts. Reuses inbox() (agent proposals) and scans Orders.
+async function attention() {
+  if (!connected()) return { db_connected: false, critical_issues: [], buckets: { needs_attention: [] } };
+  const { Order, Lead } = M();
+  const now = Date.now();
+
+  const items = (await inbox({ limit: 100 })).items || [];
+  // Priority, not recency: recommended/confident first, then severity, then newest.
+  items.sort((a, b) => (CONF_RANK[b.confidence] || 0) - (CONF_RANK[a.confidence] || 0) || new Date(b.created_at) - new Date(a.created_at));
+
+  const orders = await Order.find({ status: { $in: _ACTIVE } })
+    .select('status client laboratory deadlines payments lab_interactions layouts originals created_at updated_at sheet_row_id')
+    .limit(2000).lean();
+
+  const critical_issues = [];
+  for (const o of orders) critical_issues.push(...orderDangers(o, now));
+  critical_issues.sort((a, b) => (SEV_RANK[b.severity] || 0) - (SEV_RANK[a.severity] || 0));
+
+  const st = (s) => orders.filter(o => String(o.status || '').trim() === s).length;
+  const buckets = {
+    needs_attention: items,
+    waiting_lab: st('Ждем макет') + st('Ждем оригинал'),
+    waiting_client: st('На согласовании') + await Lead.countDocuments({ state: { $in: ['waiting_application', 'waiting_payment'] } }),
+    waiting_operator: st('Запустить') + st('Оригинал получен'),
+    completed: await Order.countDocuments({ status: 'Завершен' }),
+  };
+  return { db_connected: true, critical_issues, buckets };
+}
+
+// DB: one order's client timeline.
+async function orderTimeline(orderId) {
+  if (!connected()) return { db_connected: false };
+  const { Order } = M();
+  const o = await Order.findById(orderId).lean();
+  if (!o) throw errorUtils.notFoundError('Заказ не найден');
+  return { db_connected: true, order_id: String(o._id), client: o.client?.companyName || o.client?.name || null, status: o.status, steps: orderTimelineSteps(o) };
+}
+
 module.exports = {
   summary, pipeline, inbox, drafts, kb, decide, chat, LEAD_STATE_LABELS,
   businessDashboard, sources, listUsers, createUser, setUserActive, kbPending, kbDecide, auditLog,
+  // attention-first (pure + db)
+  orderDangers, orderTimelineSteps, attention, orderTimeline,
 };

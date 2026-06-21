@@ -28,11 +28,14 @@
   </header>
 
   <main id="screens">
-    <!-- Главная -->
+    <!-- Главная — очередь внимания -->
     <section id="screen-dashboard" class="screen active">
       <h2>Главная</h2>
-      <p class="muted">Что требует внимания сегодня</p>
-      <div id="dash-tiles" class="cards"></div>
+      <p class="muted">Что требует действия сегодня</p>
+      <div id="critical-issues"></div>
+      <div id="attention-buckets" class="cards"></div>
+      <h3>Требует внимания</h3>
+      <div id="attention-queue" class="stream"></div>
       <h3>Источники данных</h3>
       <div id="dash-sources" class="sources"></div>
     </section>

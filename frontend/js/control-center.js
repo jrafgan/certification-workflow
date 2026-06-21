@@ -30,7 +30,7 @@
   const offline = (msg) => `<div class="offline">${esc(msg || 'Нет подключения к базе данных. Запустите MongoDB — интерфейс работает, данные появятся после подключения.')}</div>`;
 
   // ── навигация ───────────────────────────────────────────────────────────
-  const SCREENS = { dashboard: loadDashboard, inbox: loadInbox, drafts: loadDrafts, pipeline: loadPipeline, chat: loadChat, kb: loadKb, audit: loadAudit, users: loadUsers };
+  const SCREENS = { dashboard: loadAttention, inbox: loadInbox, drafts: loadDrafts, pipeline: loadPipeline, chat: loadChat, kb: loadKb, audit: loadAudit, users: loadUsers };
   let current = 'dashboard';
   function show(name) {
     current = name;
@@ -42,14 +42,34 @@
   $('#refresh').addEventListener('click', () => show(current));
   $('#logout').addEventListener('click', async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/app/login.html'; });
 
-  // ── 1. Главная: бизнес-приоритеты + источники данных ────────────────────
-  async function loadDashboard() {
-    const d = await getJSON(api('/dashboard')); setDb(d.db_connected);
-    const tilesEl = $('#dash-tiles');
-    if (!d.db_connected) { tilesEl.innerHTML = offline(); $('#dash-sources').innerHTML = ''; loadSources(); return; }
-    tilesEl.innerHTML = (d.tiles || []).map(t =>
-      `<div class="card ${t.count ? '' : 'zero'} ${t.urgent ? 'urgent' : ''}" data-go="${t.screen}" title="${esc(t.hint)}">
-         <div class="n">${t.count}</div><div class="lbl">${esc(t.label)}</div></div>`).join('');
+  // ── 1. Главная: очередь внимания (критические проблемы + приоритетная очередь) ──
+  const BUCKETS = [
+    ['waiting_client', 'Ждём клиента', 'pipeline'],
+    ['waiting_lab', 'Ждём лабораторию', 'pipeline'],
+    ['waiting_operator', 'Ждём оператора', 'inbox'],
+    ['completed', 'Завершено', 'pipeline'],
+  ];
+  async function loadAttention() {
+    const d = await getJSON(api('/attention')); setDb(d.db_connected);
+    const ci = $('#critical-issues'), bk = $('#attention-buckets'), q = $('#attention-queue');
+    if (!d.db_connected) { ci.innerHTML = offline(); bk.innerHTML = ''; q.innerHTML = ''; loadSources(); return; }
+
+    // Критические проблемы — самое опасное для бизнеса, наверху.
+    const issues = d.critical_issues || [];
+    ci.innerHTML = issues.length
+      ? `<div class="crit-head">⚠ Критические проблемы (${issues.length})</div>` + issues.map(x =>
+          `<div class="crit ${esc(x.severity)}"><div class="crit-row"><b>${esc(x.label)}</b><span class="crit-d">${esc(x.detail)}</span>${x.order_id ? `<button class="btn-tl" data-tl="${esc(x.order_id)}">Таймлайн</button>` : ''}</div><div class="tl-inline"></div></div>`).join('')
+      : `<div class="crit-ok">Критических проблем нет ✓</div>`;
+
+    // Сводка ожиданий (Pipeline сохраняется как отдельный экран).
+    const b = d.buckets || {};
+    bk.innerHTML = BUCKETS.map(([k, l, go]) =>
+      `<div class="card ${b[k] ? '' : 'zero'}" data-go="${go}"><div class="n">${b[k] || 0}</div><div class="lbl">${esc(l)}</div></div>`).join('');
+
+    // Приоритетная очередь предложений агента.
+    lastItems = b.needs_attention || [];
+    q.innerHTML = lastItems.length ? lastItems.map(itemCard).join('') : '<div class="empty">Нет предложений, требующих решения.</div>';
+    refreshChatSelector();
     loadSources();
   }
   async function loadSources() {
@@ -62,15 +82,42 @@
   // ── общая карточка (входящие + черновики) ───────────────────────────────
   function confBadge(c) { return c ? `<span class="badge ${esc(c)}">${esc(CONF_RU[c] || c)}</span>` : ''; }
   function itemCard(it) {
-    const ev = (it.evidence || []).length ? `<ul class="evidence">${it.evidence.slice(0, 6).map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : '';
+    const conf = confBadge(it.confidence);
+    const n = (it.evidence || []).length;
+    // Evidence inline, expandable (no screen switch needed — Task 3).
+    const ev = n ? `<details class="ev-d"><summary>Доказательства (${n})</summary><ul class="evidence">${it.evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul></details>` : '';
     const acts = (it.actions || []).map(a => `<button class="btn-${a}" data-act="${a}" data-type="${esc(it.type)}" data-id="${esc(it.id)}">${ACTION_RU[a] || a}</button>`).join('');
+    const tlBtn = it.order_id ? `<button class="btn-tl" data-tl="${esc(it.order_id)}">Таймлайн</button>` : '';
+    const isAudit = it.audit_kind === 'status_audit';
+    // Status-audit card (Task 5): Current | Suggested | Confidence, before approval.
+    const auditFlow = isAudit ? `<div class="audit-flow">
+        <div><span class="af-l">Текущий статус:</span> «${esc(it.current_status || '')}»</div>
+        <div><span class="af-l">Предлагаемый:</span> «${esc(it.proposed_status || 'без изменений')}» ${conf}</div>
+      </div>` : '';
     return `<div class="item" data-type="${esc(it.type)}" data-id="${esc(it.id)}">
-      <div class="head"><span class="title">${esc(it.title)}</span>${confBadge(it.confidence)}<span class="sub">${esc(it.subtitle || '')}</span></div>
-      ${it.body ? `<div class="body">${esc(it.body)}</div>` : ''}
+      <div class="head"><span class="title">${esc(it.title)}</span>${isAudit ? '' : conf}<span class="sub">${esc(it.subtitle || '')}</span></div>
+      ${auditFlow}
+      ${it.body && !isAudit ? `<div class="body">${esc(it.body)}</div>` : ''}
       ${it.reason ? `<div class="reason">${esc(it.reason)}</div>` : ''}${ev}
-      <div class="actions">${acts}<button class="btn-ask" data-act="ask" data-type="${esc(it.type)}" data-id="${esc(it.id)}">? Спросить</button></div>
+      <div class="actions">${acts}${tlBtn}<button class="btn-ask" data-act="ask" data-type="${esc(it.type)}" data-id="${esc(it.id)}">? Спросить</button></div>
+      <div class="tl-inline"></div>
     </div>`;
   }
+
+  // ── Order timeline (Task 4): Заявка → Оплата → Лаборатория → Согласование → Оригинал → Завершено
+  function renderTimeline(steps) {
+    return `<div class="timeline">` + (steps || []).map((s, i) =>
+      `<div class="tl-step ${s.state}"><span class="tl-dot"></span><span class="tl-lbl">${esc(s.label)}</span></div>${i < steps.length - 1 ? '<span class="tl-arrow">→</span>' : ''}`).join('') + `</div>`;
+  }
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-tl]'); if (!b) return;
+    const card = b.closest('.item, .crit'); const slot = card && card.querySelector('.tl-inline'); if (!slot) return;
+    if (slot.dataset.open === '1') { slot.innerHTML = ''; slot.dataset.open = '0'; return; }
+    slot.innerHTML = '<div class="muted">загрузка…</div>';
+    const d = await getJSON(api(`/order/${b.dataset.tl}/timeline`));
+    slot.innerHTML = d.db_connected && d.steps ? renderTimeline(d.steps) : '<div class="empty">нет данных по заказу</div>';
+    slot.dataset.open = '1';
+  });
 
   // ── 2. Входящие задачи ──────────────────────────────────────────────────
   async function loadInbox() {

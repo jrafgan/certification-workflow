@@ -23,6 +23,8 @@ router.get('/drafts',    async (_req, res, next) => { try { res.json(await cc.dr
 router.get('/kb',        async (req, res, next) => { try { res.json(await cc.kb({ category: req.query.category })); } catch (e) { next(e); } });
 router.get('/sources',   async (_req, res, next) => { try { res.json(await cc.sources()); } catch (e) { next(e); } });
 router.get('/audit',     async (req, res, next) => { try { res.json(await cc.auditLog({ limit: req.query.limit ? parseInt(req.query.limit, 10) : 100 })); } catch (e) { next(e); } });
+router.get('/attention', async (_req, res, next) => { try { res.json(await cc.attention()); } catch (e) { next(e); } });
+router.get('/order/:id/timeline', async (req, res, next) => { try { res.json(await cc.orderTimeline(req.params.id)); } catch (e) { next(e); } });
 
 // ── actions (operator + admin), audited ─────────────────────────────────────
 router.post('/decide', async (req, res, next) => {
