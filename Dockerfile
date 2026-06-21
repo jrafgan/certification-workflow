@@ -15,6 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app/backend
 
 # Install production dependencies first (better layer caching).
+# The backend never launches a browser (WhatsApp/Chromium runs in its own image), so
+# skip puppeteer's Chromium download here — faster build, smaller image.
+ENV PUPPETEER_SKIP_DOWNLOAD=1
 COPY backend/package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
