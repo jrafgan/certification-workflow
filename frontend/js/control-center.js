@@ -42,6 +42,27 @@
   $('#refresh').addEventListener('click', () => show(current));
   $('#logout').addEventListener('click', async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/app/login.html'; });
 
+  // ── Сущность по номеру WhatsApp (1-й ID телефон, 2-й ID юрлицо) ──
+  const ACTOR_RU = { operator: 'оператор', lab: 'лаборатория', client: 'клиент' };
+  async function findEntity() {
+    const phone = ($('#entity-phone').value || '').trim();
+    const out = $('#entity-result'); if (!phone) { out.innerHTML = ''; return; }
+    out.innerHTML = '<div class="muted">поиск…</div>';
+    let e; try { e = await getJSON('/api/client-entity?phone=' + encodeURIComponent(phone)); } catch (_) { out.innerHTML = '<div class="empty">Ошибка.</div>'; return; }
+    if (!e || !e.found) { out.innerHTML = `<div class="empty">Сущность не найдена (${esc((e && e.reason) || '')}).</div>`; return; }
+    const orders = (e.orders || []).map(o =>
+      `<li>«${esc(o.status || '—')}» <span class="muted">${esc(o.stage)}${o.next_actor_ru ? ' · действует: ' + esc(o.next_actor_ru) : ' · готово'}</span></li>`).join('') || '<li class="muted">нет строк в «Декларации»</li>';
+    out.innerHTML = `<div class="entity-card">
+      <div><b>Телефон:</b> ${esc(e.phone)} <span class="muted">(1-й ID)</span></div>
+      <div><b>Юрлицо:</b> ${esc(e.legal_entity || '—')} ${e.entity_confirmed ? '<span class="muted">(подтверждено)</span>' : '<span class="muted">(предварительно)</span>'} <span class="muted">(2-й ID)</span></div>
+      <div><b>Состояние:</b> ${e.is_new_application ? 'новая заявка' : (e.in_declaration ? 'в работе' : '—')} · активных заказов: ${esc(String(e.active_count))} · ${e.alive ? 'живёт' : 'завершено'}</div>
+      <div><b>Заказы:</b><ul class="entity-orders">${orders}</ul></div>
+      <div class="muted">Из WhatsApp (канал не подключён): свидетельство ИП/ОсОО, чек оплаты, долг.</div>
+    </div>`;
+  }
+  $('#entity-find').addEventListener('click', findEntity);
+  $('#entity-phone').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') findEntity(); });
+
   // ── Очередь работ (агент сам определяет состояние; «Создать макет» — пер-заявка) ──
   function wqItem(key, it) {
     if (key === 'new_applications') {
