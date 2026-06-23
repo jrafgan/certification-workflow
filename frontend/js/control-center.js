@@ -42,6 +42,29 @@
   $('#refresh').addEventListener('click', () => show(current));
   $('#logout').addEventListener('click', async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/app/login.html'; });
 
+  // ── «Создать макет»: latest «Новая форма» row → classify → DOCX → download link ──
+  $('#btn-make-mockup').addEventListener('click', async () => {
+    const out = $('#mockup-result'); out.innerHTML = '<div class="muted">генерация…</div>';
+    let d;
+    try { d = await postJSON('/api/mockups/generate-from-form', {}); }
+    catch (e) { out.innerHTML = '<div class="empty">Ошибка генерации.</div>'; return; }
+    if (!d || !d.generated) {
+      const why = d && d.blocked === 'classification_needs_operator'
+        ? 'требуется решение оператора по ДС/СС (поле «детский/взрослый» не распознано)'
+        : (d && d.blocked) || 'неизвестная причина';
+      out.innerHTML = `<div class="empty">Не сгенерировано: ${esc(why)}</div>`;
+      return;
+    }
+    const c = d.classification || {};
+    out.innerHTML = `<div class="mockup-card">
+      <div><b>Классификация:</b> ${esc(c.age || '')} · ${esc(c.category || '')} · <b>${esc(c.doc_type || '')}</b> · составов: ${esc(String(c.composition_groups))} · протоколов: ${esc(String(c.protocol_groups))} · образцов: ${esc(String(c.samples_required))} · лаб.: ${esc(c.laboratory || '')} · ${esc(String(c.confidence))}%</div>
+      <div><b>Шаблон:</b> ${esc((d.template_used || '').split('/').pop())}</div>
+      <div><b>Файл:</b> ${esc(d.mockup_file_name || '')}</div>
+      <div class="mockup-dl"><a class="btn-dl" href="${esc(d.download_url)}" download>⬇ Скачать макет</a>${d.attachment_download_url ? ` <a class="btn-dl" href="${esc(d.attachment_download_url)}" download>⬇ Скачать приложение</a>` : ''}</div>
+      <div class="muted">строка формы: ${esc(String(d.sheet_row || ''))}</div>
+    </div>`;
+  });
+
   // ── 1. Главная: очередь внимания (критические проблемы + приоритетная очередь) ──
   const BUCKETS = [
     ['waiting_client', 'Ждём клиента', 'pipeline'],
