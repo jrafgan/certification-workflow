@@ -32,6 +32,7 @@ router.use('/email-drafts', require('./emailDrafts'));
 router.use('/lead-recoveries', require('./leadRecoveries'));
 router.use('/audit-packages', require('./auditPackages'));
 router.use('/leads', require('./leads'));
+router.use('/phone-entities', require('./phoneEntities'));
 router.use('/control-center', require('./controlCenter'));
 
 module.exports = router;

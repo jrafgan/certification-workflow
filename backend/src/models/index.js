@@ -15,10 +15,14 @@ const { Lead, PLATFORMS, LEAD_STATES: LEAD_PIPELINE_STATES, LANGUAGES, SERVICE_C
 const { LeadMessageDraft, DRAFT_KINDS: LEAD_DRAFT_KINDS, DRAFT_STATES: LEAD_DRAFT_STATES, DRAFT_DECISIONS: LEAD_DRAFT_DECISIONS } = require('./LeadMessageDraft');
 const { User, ROLES } = require('./User');
 const { AuditLog } = require('./AuditLog');
+const { PhoneEntityLink, LINK_SOURCES, LINK_STATUSES } = require('./PhoneEntityLink');
 
 module.exports = {
   Order,
   Task,
+  PhoneEntityLink,
+  LINK_SOURCES,
+  LINK_STATUSES,
   Declaration,
   LabCommThread,
   WhatsAppMessage,
