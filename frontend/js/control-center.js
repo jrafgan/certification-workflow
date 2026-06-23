@@ -78,8 +78,30 @@
       <div><b>Классификация:</b> ${esc(c.age || '')} · ${esc(c.category || '')} · <b>${esc(c.doc_type || '')}</b> · составов: ${esc(String(c.composition_groups))} · протоколов: ${esc(String(c.protocol_groups))} · образцов: ${esc(String(c.samples_required))} · лаб.: ${esc(c.laboratory || '')} · ${esc(String(c.confidence))}%</div>
       <div><b>Шаблон:</b> ${esc((d.template_used || '').split('/').pop())}</div>
       <div><b>Файл:</b> ${esc(d.mockup_file_name || '')}</div>
-      <div class="mockup-dl"><a class="btn-dl" href="${esc(d.download_url)}" download>⬇ Скачать макет</a>${d.attachment_download_url ? ` <a class="btn-dl" href="${esc(d.attachment_download_url)}" download>⬇ Скачать приложение</a>` : ''}</div>
+      <div class="mockup-dl"><a class="btn-dl" href="${esc(d.download_url)}" download>⬇ Скачать макет</a>${d.attachment_download_url ? ` <a class="btn-dl" href="${esc(d.attachment_download_url)}" download>⬇ Скачать приложение</a>` : ''}
+        <button class="btn-mail" data-mrow="${esc(String(d.sheet_row || ''))}">✉ Письмо в лабораторию</button></div>
+      <div class="lab-email"></div>
       <div class="muted">строка формы: ${esc(String(d.sheet_row || ''))}</div>
+    </div>`;
+  });
+
+  // «Письмо в лабораторию»: подготовить ЧЕРНОВИК (получатель/тема/тело/вложения). НЕ отправляет.
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-mrow]'); if (!b) return;
+    const card = b.closest('.mockup-card'); const slot = card && card.querySelector('.lab-email'); if (!slot) return;
+    slot.innerHTML = '<div class="muted">подготовка письма…</div>';
+    let d;
+    try { d = await postJSON('/api/lab-emails/prepare-from-form', { sheet_row: parseInt(b.dataset.mrow, 10) }); }
+    catch (_) { slot.innerHTML = '<div class="empty">Ошибка подготовки письма.</div>'; return; }
+    if (!d || !d.prepared) { slot.innerHTML = `<div class="empty">Письмо не подготовлено: ${esc((d && d.blocked) || 'неизвестно')}</div>`; return; }
+    const m = d.lab_email;
+    slot.innerHTML = `<div class="mail-card">
+      <div><b>Кому:</b> ${esc(m.to)} <span class="muted">(${esc(m.lab)})</span></div>
+      <div><b>Тема:</b> ${esc(m.subject)}</div>
+      <div><b>Вложения:</b> ${esc(m.attachments.map(a => a.name).join(', '))}</div>
+      <div class="mail-body">${esc(m.body).replace(/\n/g, '<br>')}</div>
+      ${m.duplicate_warning ? `<div class="mail-warn">⚠ ${esc(m.duplicate_warning)}</div>` : ''}
+      <div class="muted">Черновик — проверьте и отправьте вручную. Система не отправляет автоматически.</div>
     </div>`;
   });
 

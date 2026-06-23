@@ -47,9 +47,18 @@ function generateFromApplication(application = {}, opts = {}) {
     return { generated: false, blocked: gen.render_blocked || 'render_failed', classification, template_expected: gen.template_expected };
   }
 
+  // Subject name = «<юр.форма> <название>». The form's legal-entity field is a dropdown that is
+  // sometimes a clean token (ИП/ОсОО/…) and sometimes an ambiguous option («ОсОО или ООО или ТОО»);
+  // only prepend a CLEAN single legal form, otherwise use the name alone.
+  const lf = String(application.legal_entity || '').trim();
+  const cleanLegal = /^(ИП|ОсОО|ООО|ТОО|ОАО|ЗАО|ЧП)$/i.test(lf) ? lf : '';
+  const client_name = [cleanLegal, application.applicant && application.applicant.name]
+    .filter(Boolean).map(s => String(s).trim()).join(' ').trim() || applicant;
+
   return {
     generated: true,
     generation_id: genId,
+    client_name,                                              // «ИП Иванов» — for the lab-email subject
     classification: {
       age: classification.age.value,
       category: classification.category,                       // sewing | knitwear | mixed
