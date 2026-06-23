@@ -18,6 +18,10 @@ const PORT = parseInt(process.env.PORT, 10) || 3000;
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
+// PUBLIC Meta WhatsApp Cloud API webhook — mounted BEFORE express.json so the POST raw body
+// is available for the X-Hub-Signature-256 HMAC check. No auth (Meta calls it).
+app.use('/webhooks/whatsapp', require('./routes/whatsappCloud'));
+
 app.use(express.json());
 
 // ─── Sessions (login required — no anonymous access) ──────────────────────────
