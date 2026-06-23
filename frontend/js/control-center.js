@@ -42,18 +42,36 @@
   $('#refresh').addEventListener('click', () => show(current));
   $('#logout').addEventListener('click', async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/app/login.html'; });
 
-  // ── «Создать макет»: latest «Новая форма» row → classify → DOCX → download link ──
-  $('#btn-make-mockup').addEventListener('click', async () => {
-    const out = $('#mockup-result'); out.innerHTML = '<div class="muted">генерация…</div>';
+  // ── Очередь работ (агент сам определяет состояние; «Создать макет» — пер-заявка) ──
+  function wqItem(key, it) {
+    if (key === 'new_applications') {
+      return `<li>${esc(it.applicant || '—')}${it.legal_entity ? ` <span class="muted">${esc(it.legal_entity)}</span>` : ''}
+        <button class="btn-mk" data-row="${esc(String(it.sheet_row))}" data-name="${esc(it.applicant || '')}">Создать макет</button></li>`;
+    }
+    if (it.current !== undefined) return `<li>«${esc(it.current || '')}» → «${esc(it.proposed || 'без изменений')}»${it.order_id ? ` <button class="btn-ws" data-ws="${esc(it.order_id)}">Открыть заказ</button>` : ''}</li>`;
+    if (it.detail !== undefined && it.type) return `<li>${esc(it.label || it.type)}: ${esc(it.detail || '')}${it.order_id ? ` <button class="btn-ws" data-ws="${esc(it.order_id)}">Открыть заказ</button>` : ''}</li>`;
+    return `<li>${esc(it.client || '—')} <span class="muted">${esc(it.status || '')}</span>${it.order_id ? ` <button class="btn-ws" data-ws="${esc(it.order_id)}">Открыть заказ</button>` : ''}</li>`;
+  }
+  async function loadWorkQueue() {
+    const el = $('#work-queue'); if (!el) return;
+    let d; try { d = await getJSON('/api/work-queue'); } catch (_) { el.innerHTML = ''; return; }
+    el.innerHTML = (d.sections || []).map(s =>
+      `<details class="wq-sec" ${s.count ? '' : 'data-empty="1"'}><summary>${esc(s.label)} <span class="wq-n">${s.count}</span></summary>` +
+      (s.count ? `<ul class="wq-list">${s.items.map(it => wqItem(s.key, it)).join('')}</ul>` : '<div class="empty">нет</div>') +
+      `</details>`).join('');
+  }
+  // «Создать макет» for a specific application row → classify → DOCX → download link.
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-row]'); if (!b) return;
+    const out = $('#mockup-result'); out.innerHTML = `<div class="muted">генерация для «${esc(b.dataset.name)}»…</div>`;
     let d;
-    try { d = await postJSON('/api/mockups/generate-from-form', {}); }
-    catch (e) { out.innerHTML = '<div class="empty">Ошибка генерации.</div>'; return; }
+    try { d = await postJSON('/api/mockups/generate', { sheet_row: parseInt(b.dataset.row, 10) }); }
+    catch (_) { out.innerHTML = '<div class="empty">Ошибка генерации.</div>'; return; }
     if (!d || !d.generated) {
       const why = d && d.blocked === 'classification_needs_operator'
         ? 'требуется решение оператора по ДС/СС (поле «детский/взрослый» не распознано)'
         : (d && d.blocked) || 'неизвестная причина';
-      out.innerHTML = `<div class="empty">Не сгенерировано: ${esc(why)}</div>`;
-      return;
+      out.innerHTML = `<div class="empty">Не сгенерировано: ${esc(why)}</div>`; return;
     }
     const c = d.classification || {};
     out.innerHTML = `<div class="mockup-card">
@@ -93,6 +111,7 @@
     lastItems = b.needs_attention || [];
     q.innerHTML = lastItems.length ? lastItems.map(itemCard).join('') : '<div class="empty">Нет предложений, требующих решения.</div>';
     refreshChatSelector();
+    loadWorkQueue();
     loadAttentionCenter();
     loadSources();
   }

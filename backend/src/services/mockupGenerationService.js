@@ -93,6 +93,22 @@ async function generateFromLatestForm(opts = {}, deps = {}) {
   return { sheet_row: sheetRow, ...generateFromApplication(application, opts) };
 }
 
+// generateFromForm(sheetRow, opts, deps) — generate for a SPECIFIC «Новая форма» row (the
+// work-queue replacement for "latest row"). sheetRow is the 1-based sheet row number.
+async function generateFromForm(sheetRow, opts = {}, deps = {}) {
+  const mapper = deps.mapper || require('./formFieldMapper');
+  const readRows = deps.readRows || defaultReadRows;
+
+  const { header, rows } = await readRows();
+  const idx = Number(sheetRow) - 2;                          // row 2 = first data row
+  if (!Number.isInteger(idx) || idx < 0 || idx >= rows.length) {
+    return { generated: false, blocked: 'row_not_found', sheet_row: sheetRow };
+  }
+  const application = mapper.mapRow(header, rows[idx], { docType: null });
+  if (!application.applicant.name) return { generated: false, blocked: 'empty_row', sheet_row: Number(sheetRow) };
+  return { sheet_row: Number(sheetRow), ...generateFromApplication(application, opts) };
+}
+
 // defaultReadRows — live Google Sheets reader for "Новая форма" (read-only). Requires
 // GOOGLE_SERVICE_ACCOUNT_KEY_FILE + NEW_FORM_SHEET_ID in the environment.
 async function defaultReadRows() {
@@ -121,4 +137,4 @@ function resolveDownload(genId, kind = 'mockup', opts = {}) {
   return { path: path.join(dir, file), filename: file };
 }
 
-module.exports = { generateFromApplication, generateFromLatestForm, resolveDownload, baseDir, defaultReadRows };
+module.exports = { generateFromApplication, generateFromLatestForm, generateFromForm, resolveDownload, baseDir, defaultReadRows };

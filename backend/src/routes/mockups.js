@@ -18,9 +18,13 @@ router.post('/generate-from-form', async (_req, res, next) => {
   catch (err) { next(err); }
 });
 
+// Generate for a SPECIFIC «Новая форма» row (work-queue action) — { sheet_row }.
+// Falls back to a raw application object for direct/testing use.
 router.post('/generate', async (req, res, next) => {
   try {
-    const application = req.body && req.body.application ? req.body.application : req.body;
+    const body = req.body || {};
+    if (body.sheet_row != null) { res.status(200).json(await gen.generateFromForm(body.sheet_row)); return; }
+    const application = body.application ? body.application : body;
     res.status(200).json(gen.generateFromApplication(application || {}));
   } catch (err) { next(err); }
 });
