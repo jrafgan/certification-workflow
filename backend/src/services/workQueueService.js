@@ -24,18 +24,38 @@ function applicationState(application = {}, launchedPhones = new Set()) {
   return pk && launchedPhones.has(pk) ? 'launched' : 'new';
 }
 
-// ─── DB: phones whose Declaration has progressed beyond «Запустить» (= launched) ──
+// «Декларация» (tab Лист1) — operator-confirmed columns. Only J (phone) and N (status) drive
+// logic; everything else is RESERVE. See memory declaration-schema-status.
+const DECL_PHONE_COL  = 9;   // J — Номер тел: (primary client ID)
+const DECL_STATUS_COL = 13;  // N — Статус
+
+// defaultReadDeclaration — live, read-only Google Sheets read of «Декларация» data rows.
+async function defaultReadDeclaration() {
+  const { google } = require('googleapis');
+  const auth = new google.auth.GoogleAuth({ keyFile: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
+  const sheets = google.sheets({ version: 'v4', auth });
+  const tab = process.env.DECLARATION_SHEET_NAME || 'Лист1';
+  const a1 = /^[A-Za-z0-9_]+$/.test(tab) ? tab : `'${tab.replace(/'/g, "''")}'`;
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.DECLARATION_SHEET_ID, range: `${a1}!A1:V2000` });
+  return (res.data.values || []).slice(1);                    // data rows (skip header)
+}
+
+// ─── Phones present in «Декларация» with a real status (= launched) ─────────────
+// A «Новая форма» application is NOT new once its phone (J) appears in «Декларация» with a
+// non-empty status (N) that is not «запустить». Read-only; uses ONLY J + N.
 async function buildLaunchedIndex(deps = {}) {
-  const models = deps.models || require('../models');
-  const Declaration = models.Declaration;
+  const read = deps.readDeclaration || defaultReadDeclaration;
   const set = new Set();
   try {
-    const decls = await Declaration.find({}).select('phone status').lean();
-    for (const d of decls) {
-      const st = String(d.status || '').trim();
-      if (d.phone && st && st !== 'Запустить') set.add(matchKey(d.phone));
+    for (const r of await read()) {
+      const phone = r[DECL_PHONE_COL];
+      const status = String(r[DECL_STATUS_COL] || '').trim().toLowerCase();
+      if (phone && status && status !== 'запустить') {
+        const k = matchKey(String(phone));
+        if (k) set.add(k);
+      }
     }
-  } catch (_) { /* no DB → everything is new */ }
+  } catch (_) { /* no access → everything stays new */ }
   return set;
 }
 
@@ -106,4 +126,4 @@ async function build(deps = {}) {
   return { sections, total: sections.reduce((n, s) => n + s.count, 0), recommend_only: true };
 }
 
-module.exports = { applicationState, buildLaunchedIndex, newApplications, waitingSamples, build };
+module.exports = { applicationState, buildLaunchedIndex, defaultReadDeclaration, newApplications, waitingSamples, build, DECL_PHONE_COL, DECL_STATUS_COL };

@@ -63,6 +63,30 @@ const readRows = async () => ({ header: HEADER, rows: ROWS });
     assert.ok(!apps.some(a => a.phone === '+996700333333'));
   });
 
+  console.log('\n[buildLaunchedIndex — live «Декларация» J(phone)+N(status)]');
+  // Declaration row: J=col 9 (phone), N=col 13 (status); other cols irrelevant.
+  const DR = (phone, status) => { const r = new Array(14).fill(''); r[wq.DECL_PHONE_COL] = phone; r[wq.DECL_STATUS_COL] = status; return r; };
+  const readDeclaration = async () => [
+    DR('+996700333333', 'завершен'),   // launched
+    DR('+996700222222', 'отказ'),      // launched
+    DR('+996700111111', ''),           // empty status → NOT launched
+    DR('+996700999999', 'Запустить'),  // still at launch → NOT launched
+  ];
+  await test('launched = phone in «Декларация» with real status (≠ empty/«запустить»)', async () => {
+    const idx = await wq.buildLaunchedIndex({ readDeclaration });
+    assert.ok(idx.has(matchKey('+996700333333')));
+    assert.ok(idx.has(matchKey('+996700222222')));
+    assert.ok(!idx.has(matchKey('+996700111111')));   // empty status
+    assert.ok(!idx.has(matchKey('+996700999999')));   // «Запустить»
+  });
+  await test('newApplications uses live «Декларация» to exclude launched', async () => {
+    // ROWS has 333333 (launched in decl) + 111111/222222 (not). Expect 333333 excluded via decl.
+    const decl = async () => [DR('+996700333333', 'завершен')];
+    const r = await wq.newApplications({ readRows, readDeclaration: decl });
+    assert.ok(!r.some(a => a.phone === '+996700333333'));
+    assert.ok(r.some(a => a.phone === '+996700222222'));
+  });
+
   console.log('\n[build — 8 sections]');
   const q = await wq.build({ readRows, launchedPhones: new Set(), models: {} });
   await test('returns exactly the 8 required sections in order', () => {
