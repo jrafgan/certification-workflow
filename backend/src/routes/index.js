@@ -37,6 +37,7 @@ router.use('/mockups', require('./mockups'));
 router.use('/work-queue', require('./workQueue'));
 router.use('/lab-emails', require('./labEmails'));
 router.use('/client-entity', require('./clientEntity'));
+router.use('/payments', require('./payments'));
 router.use('/control-center', require('./controlCenter'));
 
 module.exports = router;
