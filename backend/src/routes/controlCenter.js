@@ -25,6 +25,7 @@ router.get('/sources',   async (_req, res, next) => { try { res.json(await cc.so
 router.get('/audit',     async (req, res, next) => { try { res.json(await cc.auditLog({ limit: req.query.limit ? parseInt(req.query.limit, 10) : 100 })); } catch (e) { next(e); } });
 router.get('/attention', async (_req, res, next) => { try { res.json(await cc.attention()); } catch (e) { next(e); } });
 router.get('/order/:id/timeline', async (req, res, next) => { try { res.json(await cc.orderTimeline(req.params.id)); } catch (e) { next(e); } });
+router.get('/order/:id/workspace', async (req, res, next) => { try { res.json(await cc.orderWorkspace(req.params.id)); } catch (e) { next(e); } });
 
 // ── actions (operator + admin), audited ─────────────────────────────────────
 router.post('/decide', async (req, res, next) => {

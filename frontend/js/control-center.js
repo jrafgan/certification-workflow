@@ -58,7 +58,7 @@
     const issues = d.critical_issues || [];
     ci.innerHTML = issues.length
       ? `<div class="crit-head">⚠ Критические проблемы (${issues.length})</div>` + issues.map(x =>
-          `<div class="crit ${esc(x.severity)}"><div class="crit-row"><b>${esc(x.label)}</b><span class="crit-d">${esc(x.detail)}</span>${x.order_id ? `<button class="btn-tl" data-tl="${esc(x.order_id)}">Таймлайн</button>` : ''}</div><div class="tl-inline"></div></div>`).join('')
+          `<div class="crit ${esc(x.severity)}"><div class="crit-row"><b>${esc(x.label)}</b><span class="crit-d">${esc(x.detail)}</span>${x.order_id ? `<button class="btn-tl" data-tl="${esc(x.order_id)}">Таймлайн</button> <button class="btn-ws" data-ws="${esc(x.order_id)}">Открыть заказ</button>` : ''}</div><div class="tl-inline"></div></div>`).join('')
       : `<div class="crit-ok">Критических проблем нет ✓</div>`;
 
     // Сводка ожиданий (Pipeline сохраняется как отдельный экран).
@@ -87,7 +87,7 @@
     // Evidence inline, expandable (no screen switch needed — Task 3).
     const ev = n ? `<details class="ev-d"><summary>Доказательства (${n})</summary><ul class="evidence">${it.evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul></details>` : '';
     const acts = (it.actions || []).map(a => `<button class="btn-${a}" data-act="${a}" data-type="${esc(it.type)}" data-id="${esc(it.id)}">${ACTION_RU[a] || a}</button>`).join('');
-    const tlBtn = it.order_id ? `<button class="btn-tl" data-tl="${esc(it.order_id)}">Таймлайн</button>` : '';
+    const tlBtn = it.order_id ? `<button class="btn-tl" data-tl="${esc(it.order_id)}">Таймлайн</button> <button class="btn-ws" data-ws="${esc(it.order_id)}">Открыть заказ</button>` : '';
     const isAudit = it.audit_kind === 'status_audit';
     // Status-audit card (Task 5): Current | Suggested | Confidence, before approval.
     const auditFlow = isAudit ? `<div class="audit-flow">
@@ -118,6 +118,47 @@
     slot.innerHTML = d.db_connected && d.steps ? renderTimeline(d.steps) : '<div class="empty">нет данных по заказу</div>';
     slot.dataset.open = '1';
   });
+
+  // ── Unified Operator Workspace (Phase 5): one read-only order screen ──────
+  const fmtDate = (d) => d ? new Date(d).toLocaleString('ru-RU') : '—';
+  function wsSection(title, inner) { return `<div class="ws-sec"><h3>${esc(title)}</h3>${inner || '<div class="empty">нет данных</div>'}</div>`; }
+  function renderWorkspace(w) {
+    const sv = w.status_verification;
+    const svHtml = sv ? `<div>Текущий: «${esc(sv.current_status || '')}» → Предлагаемый: «${esc(sv.proposed_status || 'без изменений')}» <span class="muted">(${esc(String(sv.confidence_band || sv.confidence || ''))})</span></div>`
+      + ((sv.findings || []).map(f => `<div class="ws-find ${esc(f.severity || '')}">⚠ ${esc(f.detail || f.type)}</div>`).join('') || '')
+      + (sv.reasoning ? `<div class="muted">${esc(sv.reasoning)}</div>` : '') : '';
+    const decl = w.declaration && w.declaration.present
+      ? `<div>Статус: «${esc(w.declaration.status || '—')}» · Телефон: ${esc(w.declaration.phone || '—')} · Оплата: ${esc(String(w.declaration.payment_amount ?? '—'))} · Строка: ${esc(w.declaration.sheet_row_id || '—')}</div>`
+      : '<div class="empty">Строка Декларации не связана</div>';
+    const pays = (w.payments || []).map(p => `<div>${fmtDate(p.date)} — ${esc(String(p.amount ?? ''))} ${esc(p.method || '')}${p.voided ? ' <span class="muted">(аннулирован)</span>' : ''}</div>`).join('');
+    const wa = (w.whatsapp || []).map(m => `<div class="ws-msg"><span class="muted">${fmtDate(m.at)} ${esc(m.direction || '')}</span> ${esc(m.body || (m.has_media ? '[вложение]' : ''))}</div>`).join('');
+    const em = (w.emails || []).map(t => `<div>${esc(t.recipient || '—')} · ${esc(t.status || '')} · ${fmtDate(t.last_at)}${t.has_attachment ? ' · 📎' : ''}</div>`).join('');
+    const mk = (w.mockups || []).map(l => `<div>v${esc(String(l.version || ''))} ${esc(l.file_name || '—')} · получен ${fmtDate(l.received_at)} · клиенту ${fmtDate(l.sent_to_client_at)}${l.client_decision ? ' · ' + esc(l.client_decision) : ''}</div>`).join('');
+    const att = (w.attachments || []).map(a => `<div>[${esc(a.source)}] ${esc(a.name || a.ref || '')} <span class="muted">${esc(a.kind || '')}</span></div>`).join('');
+    const recs = (w.recommendations || []).map(r => `<div>${esc(r.label || r.type)} <span class="muted">${esc(String(r.confidence || ''))} ${esc(r.state || '')}</span></div>`).join('');
+    const dng = (w.dangers || []).map(x => `<div class="ws-find ${esc(x.severity || '')}">⚠ ${esc(x.label || '')}: ${esc(x.detail || '')}</div>`).join('');
+    return `<div class="ws">
+      <div class="ws-head"><b>${esc(w.client.company || w.client.name || 'Заказ')}</b> · статус «${esc(w.status || '—')}» · долг ${esc(String(w.balance_due || 0))}
+        <div class="muted">${esc(w.client.name || '')} · ${esc(w.client.phone || '')} · ${esc(w.client.email || '')}</div></div>
+      ${wsSection('Проверка статуса (реальность)', svHtml)}
+      ${wsSection('Опасности', dng)}
+      ${wsSection('Декларация', decl)}
+      ${wsSection('Оплаты', pays)}
+      ${wsSection('Макеты', mk)}
+      ${wsSection('WhatsApp', wa)}
+      ${wsSection('Почта / лаборатория', em)}
+      ${wsSection('Вложения', att)}
+      ${wsSection('Рекомендации агента', recs)}
+    </div>`;
+  }
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-ws]'); if (!b) return;
+    const body = $('#workspace-body'); body.innerHTML = '<div class="muted">загрузка…</div>';
+    show('workspace');
+    const d = await getJSON(api(`/order/${b.dataset.ws}/workspace`));
+    body.innerHTML = d.db_connected === false ? offline() : renderWorkspace(d);
+  });
+  $('#ws-back').addEventListener('click', () => show('dashboard'));
 
   // ── 2. Входящие задачи ──────────────────────────────────────────────────
   async function loadInbox() {

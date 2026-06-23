@@ -476,9 +476,18 @@ async function orderTimeline(orderId) {
   return { db_connected: true, order_id: String(o._id), client: o.client?.companyName || o.client?.name || null, status: o.status, steps: orderTimelineSteps(o) };
 }
 
+// DB: one order's UNIFIED workspace (Declaration + WhatsApp + email + attachments + payments
+// + status verification + agent recommendations). Read-only. See orderWorkspaceService.
+async function orderWorkspace(orderId) {
+  if (!connected()) return { db_connected: false };
+  const r = await require('./orderWorkspaceService').getWorkspace(orderId);
+  if (!r.found) throw errorUtils.notFoundError('Заказ не найден');
+  return { db_connected: true, ...r.workspace };
+}
+
 module.exports = {
   summary, pipeline, inbox, drafts, kb, decide, chat, LEAD_STATE_LABELS,
   businessDashboard, sources, listUsers, createUser, setUserActive, kbPending, kbDecide, auditLog,
   // attention-first (pure + db)
-  orderDangers, orderTimelineSteps, attention, orderTimeline,
+  orderDangers, orderTimelineSteps, attention, orderTimeline, orderWorkspace,
 };
