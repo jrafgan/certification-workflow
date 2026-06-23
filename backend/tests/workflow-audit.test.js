@@ -126,6 +126,42 @@ test('fully in sync, recent activity, no findings → null (nothing to surface)'
   assert.strictEqual(r, null);
 });
 
+test('Завершен with outstanding debt → completed_with_debt finding (HIGH), no proposal', () => {
+  const allReached = {
+    payment: { reached: true, confidence: 75, items: [] },
+    lab_request: { reached: true, confidence: 90, items: [] },
+    layout: { reached: true, confidence: 85, items: [] },
+    layout_approved: { reached: true, confidence: 90, items: [] },
+    original: { reached: true, confidence: 90, items: [] },
+    delivered: { reached: true, confidence: 90, items: [] },
+  };
+  const r = svc.auditOrder({ current_status: 'Завершен', evidence: ev(allReached, { balance_due: 6000 }) }, NOW);
+  assert.ok(r, 'expected a package');
+  assert.ok(r.findings.some(f => f.type === 'completed_with_debt' && f.severity === 'HIGH'));
+  assert.strictEqual(r.proposed_status, null);
+});
+
+test('Завершен, delivered, no debt → null (truly complete)', () => {
+  const allReached = {
+    payment: { reached: true, confidence: 75, items: [] },
+    lab_request: { reached: true, confidence: 90, items: [] },
+    layout: { reached: true, confidence: 85, items: [] },
+    layout_approved: { reached: true, confidence: 90, items: [] },
+    original: { reached: true, confidence: 90, items: [] },
+    delivered: { reached: true, confidence: 90, items: [] },
+  };
+  const r = svc.auditOrder({ current_status: 'Завершен', evidence: ev(allReached, { balance_due: 0 }) }, NOW);
+  assert.strictEqual(r, null);
+});
+
+test('Завершен with no delivery evidence → completed_not_delivered finding', () => {
+  const r = svc.auditOrder({
+    current_status: 'Завершен',
+    evidence: ev({ original: { reached: true, confidence: 90, items: [] } }, { balance_due: 0 }),
+  }, NOW);
+  assert.ok(r.findings.some(f => f.type === 'completed_not_delivered'));
+});
+
 console.log('\n[collectEvidenceFromOrder]');
 
 test('derives the milestone ladder from an Order document', () => {

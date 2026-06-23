@@ -116,6 +116,18 @@ function computeFindings(current_status, evidence, now, { implied, curIdx } = {}
     findings.push({ type: 'delayed_order', detail: `The deadline for «${current_status}» passed on ${new Date(due).toISOString().slice(0, 10)}.`, severity: 'HIGH' });
   }
 
+  // Completion integrity: «Завершен» must have zero debt AND a recorded delivery. Debt is not on
+  // the milestone ladder, so it is checked here directly (Status Verification Engine, Example #1).
+  if (current_status === 'Завершен') {
+    const debt = Number(evidence.balance_due || 0);
+    const delivered = !!(evidence.milestones && evidence.milestones.delivered && evidence.milestones.delivered.reached);
+    if (debt > 0) {
+      findings.push({ type: 'completed_with_debt', detail: `Status «Завершен» but a balance of ${debt} is still due — the original is not released until paid in full.`, severity: 'HIGH' });
+    } else if (!delivered) {
+      findings.push({ type: 'completed_not_delivered', detail: 'Status «Завершен» but no delivery of the original to the client is recorded.', severity: 'HIGH' });
+    }
+  }
+
   // Missing transition / contradictory are derived from the ladder comparison.
   if (implied && curIdx != null && curIdx >= 0) {
     if (implied.ladderIndex > curIdx) {
@@ -277,7 +289,7 @@ function collectEvidenceFromOrder(order = {}) {
     : order.status === 'Ждем оригинал' ? dl.original_expected
     : null;
 
-  return { milestones: ms, last_activity_at, deadlines: { current_due }, order_ref: ref };
+  return { milestones: ms, last_activity_at, deadlines: { current_due }, balance_due: order.balance_due || 0, order_ref: ref };
 }
 
 // ─── Pure: idempotency key ─────────────────────────────────────────────────────
@@ -295,8 +307,10 @@ async function audit(deps = {}) {
   const collect      = deps.collectEvidence || collectEvidenceFromOrder;
   const now          = deps.now || Date.now();
 
-  const orders = await Order.find({ status: { $in: LADDER.filter(s => s !== 'Завершен') } })
-    .select('status sheet_row_id client declaration_id payments lab_interactions layouts originals events deadlines cancelled_reason created_at updated_at')
+  // Audit every non-cancelled status INCLUDING «Завершен» — completion integrity (debt /
+  // undelivered) must be re-verified, not assumed because the order is marked done.
+  const orders = await Order.find({ status: { $in: LADDER } })
+    .select('status sheet_row_id client declaration_id payments lab_interactions layouts originals events deadlines balance_due cancelled_reason created_at updated_at')
     .limit(2000)
     .lean();
 

@@ -56,6 +56,24 @@ test('long-idle active order with no specific danger → generic flag', () => {
   assert.strictEqual(r[0].type, 'client_waiting_long');
 });
 
+test('Завершен with outstanding debt → completed_with_debt (HIGH)', () => {
+  const r = cc.orderDangers({ _id: 'o8', status: 'Завершен', client: { name: 'Иван' }, balance_due: 6000, originals: [{ sent_to_client_at: ago(1) }] }, NOW);
+  assert.strictEqual(r.length, 1);
+  assert.strictEqual(r[0].type, 'completed_with_debt');
+  assert.strictEqual(r[0].severity, 'HIGH');
+});
+
+test('Завершен with no recorded delivery → completed_not_delivered (HIGH)', () => {
+  const r = cc.orderDangers({ _id: 'o9', status: 'Завершен', client: {}, balance_due: 0, originals: [{ received_at: ago(2) }] }, NOW);
+  assert.strictEqual(r[0].type, 'completed_not_delivered');
+  assert.strictEqual(r[0].severity, 'HIGH');
+});
+
+test('Завершен, no debt, delivered → no danger', () => {
+  const r = cc.orderDangers({ _id: 'o10', status: 'Завершен', client: {}, balance_due: 0, originals: [{ sent_to_client_at: ago(1) }] }, NOW);
+  assert.strictEqual(r.length, 0);
+});
+
 console.log('\n[orderTimelineSteps]');
 
 test('6 steps in order with correct labels', () => {

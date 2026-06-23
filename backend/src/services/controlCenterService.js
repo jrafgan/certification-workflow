@@ -397,6 +397,14 @@ function orderDangers(order = {}, now = Date.now()) {
     const decided = layout?.client_decision;
     const over = !decided && (due ? now > new Date(due).getTime() : (_daysSince(anchor, now) != null && _daysSince(anchor, now) > 3));
     if (over) add('approval_overdue', 'MEDIUM', 'Клиент не согласовал макет', `«${client}»: на согласовании ${_daysSince(anchor, now)} дн.`);
+  } else if (st === 'Завершен') {
+    // Completion integrity (Status Verification Engine): a «Завершен» order must have NO debt AND
+    // a recorded delivery to the client. Otherwise the status claims more than reality supports.
+    const debt = Number(order.balance_due || 0);
+    if (debt > 0)
+      add('completed_with_debt', 'HIGH', 'Завершён, но есть долг', `«${client}»: статус «Завершен», но числится долг ${debt} сом — оригинал не выдаётся до полной оплаты (KB).`);
+    else if (!(original && original.sent_to_client_at))
+      add('completed_not_delivered', 'HIGH', 'Завершён, но оригинал не выдан', `«${client}»: статус «Завершен», но нет отметки о выдаче оригинала клиенту.`);
   }
 
   // Generic: active order with no specific danger but very long idle.
@@ -439,8 +447,9 @@ async function attention() {
   // Priority, not recency: recommended/confident first, then severity, then newest.
   items.sort((a, b) => (CONF_RANK[b.confidence] || 0) - (CONF_RANK[a.confidence] || 0) || new Date(b.created_at) - new Date(a.created_at));
 
-  const orders = await Order.find({ status: { $in: _ACTIVE } })
-    .select('status client laboratory deadlines payments lab_interactions layouts originals created_at updated_at sheet_row_id')
+  // Include «Завершен» so completion-integrity issues (debt / undelivered) surface as critical.
+  const orders = await Order.find({ status: { $in: [..._ACTIVE, 'Завершен'] } })
+    .select('status client laboratory deadlines payments lab_interactions layouts originals balance_due created_at updated_at sheet_row_id')
     .limit(2000).lean();
 
   const critical_issues = [];
