@@ -47,12 +47,10 @@ function generateFromApplication(application = {}, opts = {}) {
     return { generated: false, blocked: gen.render_blocked || 'render_failed', classification, template_expected: gen.template_expected };
   }
 
-  // Subject name = «<юр.форма> <название>». The form's legal-entity field is a dropdown that is
-  // sometimes a clean token (ИП/ОсОО/…) and sometimes an ambiguous option («ОсОО или ООО или ТОО»);
-  // only prepend a CLEAN single legal form, otherwise use the name alone.
+  // Subject name = «<юр.форма> <название>». The legal-form prefix (ИП/ОсОО/ООО/ТОО) is MANDATORY
+  // and never dropped (operator rule). Always prepend the form's legal-entity value as-is.
   const lf = String(application.legal_entity || '').trim();
-  const cleanLegal = /^(ИП|ОсОО|ООО|ТОО|ОАО|ЗАО|ЧП)$/i.test(lf) ? lf : '';
-  const client_name = [cleanLegal, application.applicant && application.applicant.name]
+  const client_name = [lf, application.applicant && application.applicant.name]
     .filter(Boolean).map(s => String(s).trim()).join(' ').trim() || applicant;
 
   return {

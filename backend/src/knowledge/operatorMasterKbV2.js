@@ -29,6 +29,15 @@ const entries = [
   RULE('Client Communication', 'Агент может: искать клиента, заявку, статус, оплату; считать ПИ; готовить расчёты, письма и ответы.'),
   RULE('Client Communication', 'Агент НЕ имеет права без подтверждения оператора: отправлять сообщения, менять Декларацию, менять статусы, запускать документы, отправлять Email.'),
   RULE('Client Communication', 'Если агент не уверен — не придумывать. Показать найденные данные, доказательства, уровень уверенности и рекомендуемое действие, затем запросить решение оператора.'),
+  RULE('Client Communication', 'Политика многоагентной обработки: агенты (WhatsApp, Email, Document и др.) работают ПАРАЛЛЕЛЬНО и анализируют независимо. НО проверка оператором — СТРОГО последовательная: одновременно активна только одна задача оператора. Все выводы агентов попадают в ЕДИНУЮ очередь проверки. Оператор обрабатывает: 1 задача → решение → следующая задача (предотвращает перегрузку и потерю деталей). Архитектура: параллельный анализ, последовательное одобрение. Количество активных агентов-анализаторов — настраиваемое; очередь проверки оператора по умолчанию = 1 активный элемент.', {
+    value: {
+      kind: 'multi_agent_processing_policy',
+      analysis: { parallel: true, independent: true, agents_example: ['whatsapp', 'email', 'document'], active_agents_configurable: true, per_agent_active_limit: { whatsapp_conversation: 1, email_thread: 1, document_review: 1 } },
+      review: { sequential: true, one_active_task_at_a_time: true, unified_queue: true, queue_default_active_items: 1, flow: ['task', 'decision', 'next_task'] },
+      principle: 'parallel analysis, sequential approval',
+      rationale: 'prevents operator overload and missed details',
+    },
+  }),
 
   // ── Certificates (СС) ──
   RULE('Certificates', 'Сертификат соответствия (СС) оформляется через лабораторию Бермет; требуется 2 образца на каждый состав.'),
@@ -44,6 +53,41 @@ const entries = [
   FACT('Declarations', 'Срок действия ДС: 3 года.', { possibly_outdated: true }),
   RULE('Declarations', 'В Кыргызстане ДС оформляется только на ИП или ОсОО Кыргызстана.'),
   RULE('Declarations', 'Декларация — центральный рабочий документ: связывает WhatsApp, Email, клиентов, оплаты и статусы. Декларации доверяем; статусы допускается проверять и аудировать.'),
+  RULE('Declarations', 'Приоритет источника телефона/WhatsApp: номер из Декларации авторитетнее номера из Новой формы. Декларация проверяется оператором вручную; Новая форма заполняется клиентом и может содержать опечатки, устаревшие, ассистентские или временные номера. Правила сопоставления: 1) телефон Декларации — первичная идентичность; 2) телефон Новой формы — только вторичное свидетельство; 3) никогда не перезаписывать телефон Декларации из Новой формы; 4) при расхождении сформировать заметку для проверки «Phone mismatch detected. Declaration phone retained as authoritative.». Не авто-исправлять, не авто-обновлять.', {
+    value: {
+      kind: 'phone_source_priority',
+      primary: 'declaration',
+      secondary: 'new_form',
+      never_overwrite_from: 'new_form',
+      on_mismatch: { action: 'review_note', note: 'Phone mismatch detected. Declaration phone retained as authoritative.', auto_correct: false, auto_update: false },
+    },
+  }),
+  RULE('Declarations', 'Пустые строки, столбцы и поля — это НОРМА процесса (исторические данные, удалённые значения, заброшенные записи, зарезервированные поля, будущее использование, чистка оператором), а НЕ ошибки. ЗАПРЕЩЕНО: авто-удалять пустые строки или столбцы; авто-перепрофилировать пустые столбцы; выводить смысл из пустоты. При КАЖДОМ пустом или подозрительно разреженном столбце: явно показать его и статистику и спросить оператора — это резерв / устарело / намеренно не используется / запланировано на будущее. Удаление, переиспользование, изменение схемы или маппинга столбцов — ТОЛЬКО после подтверждения оператора. Принцип: «неизвестно» ≠ «не используется»; «не используется» ≠ «можно удалить»; «можно удалить» требует одобрения оператора.', {
+    value: {
+      kind: 'empty_field_governance',
+      empty_is_error: false,
+      empty_reasons: ['historical', 'deleted_values', 'abandoned_records', 'reserved', 'future_use', 'operator_cleanup'],
+      never: ['auto_delete_rows', 'auto_delete_columns', 'auto_repurpose_columns', 'infer_meaning_from_emptiness'],
+      on_empty_or_sparse: { action: 'surface_and_ask', show_statistics: true, questions: ['reserved?', 'deprecated?', 'intentionally_unused?', 'planned_for_future?'] },
+      operator_confirmation_required_before: ['delete_columns', 'reuse_columns', 'change_schema', 'change_mappings'],
+      principles: ['unknown != unused', 'unused != removable', 'removable requires operator approval'],
+    },
+  }),
+  RULE('Declarations', 'Очистка пустых строк (столбцы — НЕ трогаем: их никогда не удалять и не перепрофилировать, всегда спрашивать оператора). ПОЛНОСТЬЮ пустую строку МОЖНО предложить к удалению. «Полностью пустая» = все ячейки пусты, нет формул, нет комментариев, нет заметок, нет метаданных. Порядок: 1) найти строки-кандидаты; 2) показать номера строк; 3) показать доказательства пустоты; 4) сформировать предложение на очистку; 5) СТОП — ждать одобрения оператора. Удалять строки можно ТОЛЬКО после явного одобрения. Никогда не авто-удалять строки. Никогда не удалять массово без проверки. Правило безопасности: если уверенность, что строка полностью пуста, НИЖЕ 100% — НЕ предлагать удаление, а пометить для проверки оператором.', {
+    value: {
+      kind: 'empty_row_cleanup',
+      columns: { deletable: false, repurposable: false, always_ask: true },
+      rows: {
+        proposable_for_deletion: true,
+        definition_completely_empty: { all_cells_empty: true, no_formulas: true, no_comments: true, no_notes: true, no_metadata: true },
+        workflow: ['detect_candidates', 'show_row_numbers', 'show_emptiness_evidence', 'generate_cleanup_proposal', 'stop_wait_for_approval'],
+        never_auto_delete: true,
+        never_bulk_delete_without_review: true,
+        delete_only_after_explicit_approval: true,
+      },
+      safety: { require_100pct_confidence_empty: true, below_100pct_action: 'flag_for_operator_review_not_deletion' },
+    },
+  }),
   RULE('Declarations', 'Обязательные данные заявки: название товара, состав, заявитель, производитель, ТН ВЭД.'),
   RULE('Declarations', 'Производитель: если предоставляет данные — используются его данные; если отказывается — допускается указать данные клиента как производителя ТОЛЬКО при подтверждении клиента (без подтверждения нельзя).'),
   RULE('Declarations', 'Зарубежный заказчик: получить название компании, страну, ИНН/налоговый номер, реквизиты; в дополнениях указать, что товар производится по заказу данного юр. лица.'),
@@ -86,11 +130,65 @@ const entries = [
 
   // ── Client Communication (process) ──
   RULE('Client Communication', 'Первый контакт (клиент пишет впервые): 1) поздороваться; 2) узнать, что нужно оформить; 3) отправить ссылку на заявку; 4) попросить заполнить заявку; 5) попросить свидетельство ИП/ОсОО; 6) объяснить порядок работы.'),
+  RULE('Client Communication', 'Новые клиенты — поток ПО УМОЛЧАНИЮ: НЕ начинать с длинной квалификационной анкеты. 1) приветствие; 2) отправить ссылку на заявку; 3) дождаться заполнения заявки; 4) продолжить обработку после получения заявки. Минимум вопросов до заявки. Ссылка берётся из настраиваемого параметра application_form_url (НЕ хардкодить).', {
+    value: {
+      kind: 'new_client_default_flow',
+      no_long_questionnaire: true,
+      steps: ['greeting', 'send_application_link', 'wait_for_submission', 'continue_after_submission'],
+      application_link_source: 'application_form_url',
+    },
+    note: 'Refines the generic first-contact rule: the DEFAULT new-client flow is minimal (greet → link → wait). Reconcile with first-contact step 2 ("узнать что нужно оформить") — operator to confirm how much pre-application qualification, if any.',
+  }),
+  // Operator-editable business setting (NOT a code hardcode): the application form link.
+  // Resolution order in code: this KB setting → env APPLICATION_FORM_URL → "not configured".
+  {
+    category: 'Client Communication', type: 'fact',
+    text: 'Бизнес-настройка application_form_url (ссылка на заявку): https://dokumenty.pro/zayavka. Редактируется оператором в Базе знаний; в коде НЕ хардкодится.',
+    value: { kind: 'business_setting', key: 'application_form_url', url: 'https://dokumenty.pro/zayavka' },
+  },
+
+  // ── Mockup Agent / draft document generation ──
+  RULE('Declarations', 'Для генерации ЧЕРНОВИКОВ документов источник истины — Google-форма (заявка). Канонические поля: APPLICANT_L_E_NAME, INN, L_E_ADRESS, PHONE_NUMBER, EMAIL, MANUFACTURER_L_E_NAME, MANUFACTURER_COUNTRY, MANUFACTURER_ADRESS, BRAND_NAME, ITEMS, ITEM_COMPOSITION, TNVED. Черновики ДС/СС заполняются из данных формы; ничего не выдумывать.', {
+    value: { kind: 'draft_source_of_truth', source: 'google_form', fields: ['APPLICANT_L_E_NAME', 'INN', 'L_E_ADRESS', 'PHONE_NUMBER', 'EMAIL', 'MANUFACTURER_L_E_NAME', 'MANUFACTURER_COUNTRY', 'MANUFACTURER_ADRESS', 'BRAND_NAME', 'ITEMS', 'ITEM_COMPOSITION', 'TNVED'] },
+  }),
+  RULE('Declarations', 'Правило ДС «4 на состав»: для ОДНОГО состава ткани максимум 4 наименования товара ИЛИ 4 кода ТН ВЭД внутри одной ДС. Если больше 4 товаров ИЛИ больше 4 кодов ТН ВЭД на состав — возможны дополнительные протоколы испытаний (ПИ). Mockup Agent ОБЯЗАН обнаружить это условие и выдать предупреждение «Possible additional PI required. Operator review needed.» Не решать автоматически.', {
+    value: { kind: 'declaration_four_per_composition', max_products_per_composition: 4, max_tnved_per_composition: 4, on_exceed: { warning: 'Possible additional PI required. Operator review needed.', auto_decide: false } },
+  }),
+  RULE('Declarations', 'Несколько кодов ТН ВЭД: автоматически сформировать приложение (таблицу заявки) со столбцами Наименование товара / Состав / ТН ВЭД; основной документ ссылается на приложение.', {
+    value: { kind: 'multi_tnved_attachment', trigger: 'more_than_one_tnved', attachment_columns: ['product_name', 'composition', 'tnved'], main_doc_references_attachment: true },
+  }),
+  RULE('Laboratories', 'Пакет для лаборатории (после одобрения оператора И клиента): 1) черновик ДС или СС; 2) свидетельство клиента ИП/ОсОО/ООО; 3) стандартный текст письма в лабораторию; 4) доп. файлы при необходимости. Формировать автоматически, НЕ отправлять автоматически — нужно одобрение оператора.', {
+    value: { kind: 'lab_submission_package', contents: ['draft_document', 'client_registration_certificate', 'standard_lab_email_text', 'supporting_files'], auto_generate: true, auto_send: false, operator_approval_required: true },
+  }),
+  // §8 — client mockup-approval message (operator stated it exists; it did NOT — adding now).
+  {
+    category: 'Client Communication', type: 'fact',
+    text: 'Шаблон сообщения клиенту после отправки черновика (макета) на согласование: «Здравствуйте! Проверьте пожалуйста все данные заявителя, наименования товаров, состав и коды ТН ВЭД в приложенном макете. Если всё верно — подтвердите, пожалуйста. Если нужны правки — напишите, что исправить.» Используется автоматически как утверждённый шаблон при отправке макета.',
+    value: { kind: 'client_template', key: 'mockup_approval_request' },
+  },
+  // §2/§10 — first-contact auto-reply policy (CHANGES the prior "drafted, never auto-sent" stance
+  // for these 5 educational template kinds only; everything else stays gated).
+  RULE('Client Communication', 'Для НОВЫХ клиентов (первый контакт из рекламы: «Салам алейкум»/«Здравствуйте»/«интересует сертификация») разрешены АВТОМАТИЧЕСКИЕ ответы БЕЗ одобрения оператора, но ТОЛЬКО утверждёнными шаблонами: 1) информация об услугах; 2) цены из Базы знаний; 3) сроки из Базы знаний; 4) ссылка на заявку; 5) инструкция по заявке. Всё остальное остаётся под контролем оператора (gated).', {
+    value: { kind: 'first_contact_autoreply_policy', auto_allowed_kinds: ['service_info', 'pricing_from_kb', 'timelines_from_kb', 'application_link', 'application_instructions'], everything_else: 'gated' },
+  }),
   RULE('Client Communication', 'После заполнения заявки клиент обязан: написать в WhatsApp, сообщить что заявка заполнена, отправить свидетельство ИП/ОсОО.'),
   RULE('Client Communication', 'При жалобе клиента: не спорить; объяснить текущий этап, сроки и причину задержки; при необходимости подготовить задачу оператору для связи с лабораторией.'),
 
   // ── FAQ ──
   FACT('FAQ', 'Частые вопросы: сколько стоит ДС? сколько стоит СС? сколько времени делается? что такое ПИ? что такое ТН ВЭД? какие документы нужны? можно ли без образцов? можно ли оплатить частями? можно ли объединить товары? можно ли оформить на зарубежную компанию?'),
+
+  // ── Client FAQ — готовые ОТВЕТЫ клиенту (источник ответов агента). Составлены из
+  //    одобренных фактов БЗ выше; цены только «от …», точную сумму подтверждает специалист. ──
+  FACT('Client FAQ', 'Декларация (ДС): стоимость от 15 000 сом, изготовление около 2 недель, действует 3 года. Точную сумму подтвердит специалист после расчёта.', { value: { kind: 'client_faq', q: 'стоимость и сроки ДС' } }),
+  FACT('Client FAQ', 'Сертификат (СС): стоимость от 35 000 сом, изготовление от 1 до 1.5 месяцев, действует 1 год. Точную сумму подтвердит специалист.', { value: { kind: 'client_faq', q: 'стоимость и сроки СС' } }),
+  FACT('Client FAQ', 'Отказное письмо — отдельный документ, стоимость 5 000 сом.', { value: { kind: 'client_faq', q: 'отказное письмо' } }),
+  FACT('Client FAQ', 'ПИ — это протокол испытаний. Первый ПИ входит в стоимость документа; дополнительные нужны при разных составах товара (доп. ПИ: ДС +7 000 сом, СС +9 000 сом).', { value: { kind: 'client_faq', q: 'что такое ПИ' } }),
+  FACT('Client FAQ', 'ТН ВЭД — код товара. Трикотаж — группа 61 (тянется), швейка — группа 62 (не тянется). Трикотаж и швейка, как и детское и взрослое, оформляются отдельно. Если кода нет — поможем подобрать.', { value: { kind: 'client_faq', q: 'что такое ТН ВЭД' } }),
+  FACT('Client FAQ', 'Для заявки нужны: название товара, состав, заявитель, производитель, ТН ВЭД, а также свидетельство ИП/ОсОО.', { value: { kind: 'client_faq', q: 'какие документы нужны' } }),
+  FACT('Client FAQ', 'Образцы обязательны (ДС — 1 на состав, СС — 2 на состав), но не блокируют старт: запуск возможен после оплаты/получения заявки, даже если образцы ещё не поступили.', { value: { kind: 'client_faq', q: 'можно ли без образцов' } }),
+  FACT('Client FAQ', 'Можно запустить при частичной оплате (минимум 10 000 сом; для крупных заказов — не менее 60%). Оригинал документа выдаётся после полной оплаты.', { value: { kind: 'client_faq', q: 'оплата частями' } }),
+  FACT('Client FAQ', 'Объединять в один документ можно только совместимые категории. Трикотаж и швейка, а также детское и взрослое — оформляются отдельными документами.', { value: { kind: 'client_faq', q: 'можно ли объединить товары' } }),
+  FACT('Client FAQ', 'Для зарубежного заказчика нужны: название компании, страна, ИНН/налоговый номер, реквизиты; в дополнениях указывается, что товар произведён по заказу данного юр. лица.', { value: { kind: 'client_faq', q: 'зарубежная компания' } }),
 
   // ── Client-facing lifecycle narrative (V2 §15) — APPROVED with a mapping onto the
   //    canonical 7 Declaration sheet statuses. Operator decision: this is an explanation
