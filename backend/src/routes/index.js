@@ -33,6 +33,7 @@ router.use('/lead-recoveries', require('./leadRecoveries'));
 router.use('/audit-packages', require('./auditPackages'));
 router.use('/leads', require('./leads'));
 router.use('/phone-entities', require('./phoneEntities'));
+router.use('/mockups', require('./mockups'));
 router.use('/control-center', require('./controlCenter'));
 
 module.exports = router;

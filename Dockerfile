@@ -6,9 +6,11 @@
 FROM node:20-bookworm-slim
 
 # OCR + PDF tooling used by documentUnderstandingService / extractionReviewService.
+# zip/unzip are required by the mockup DOCX fill engine (mockupAgentService.fillTemplate).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng \
       poppler-utils \
+      zip unzip \
       ca-certificates curl tini \
   && rm -rf /var/lib/apt/lists/*
 
