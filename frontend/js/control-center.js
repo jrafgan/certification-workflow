@@ -70,7 +70,25 @@
     lastItems = b.needs_attention || [];
     q.innerHTML = lastItems.length ? lastItems.map(itemCard).join('') : '<div class="empty">Нет предложений, требующих решения.</div>';
     refreshChatSelector();
+    loadAttentionCenter();
     loadSources();
+  }
+
+  // ── Центр внимания (Phase 6): 7 категорий того, что требует оператора сегодня ──
+  function acItem(it) {
+    if (it.lead_id) return `<li>${esc(it.label || '—')}${it.platform ? ` <span class="muted">${esc(it.platform)}</span>` : ''}</li>`;
+    if (it.current !== undefined) return `<li>«${esc(it.current || '')}» → «${esc(it.proposed || 'без изменений')}» <span class="muted">${esc(String(it.confidence || ''))}</span>${it.order_id ? ` <button class="btn-ws" data-ws="${esc(it.order_id)}">Открыть заказ</button>` : ''}</li>`;
+    if (it.detail !== undefined && it.type) return `<li>${esc(it.label || it.type)}: ${esc(it.detail || '')}${it.order_id ? ` <button class="btn-ws" data-ws="${esc(it.order_id)}">Открыть заказ</button>` : ''}</li>`;
+    return `<li>${esc(it.client || '—')} <span class="muted">${esc(it.status || '')}</span>${it.order_id ? ` <button class="btn-ws" data-ws="${esc(it.order_id)}">Открыть заказ</button>` : ''}</li>`;
+  }
+  async function loadAttentionCenter() {
+    const el = $('#attention-center'); if (!el) return;
+    const d = await getJSON(api('/attention-center'));
+    if (d.db_connected === false) { el.innerHTML = ''; return; }
+    el.innerHTML = (d.categories || []).map(c =>
+      `<details class="attn-cat" ${c.count ? '' : 'data-empty="1"'}><summary>${esc(c.label)} <span class="attn-n">${c.count}</span></summary>` +
+      (c.count ? `<ul class="attn-list">${c.items.map(acItem).join('')}</ul>` : '<div class="empty">нет</div>') +
+      `</details>`).join('');
   }
   async function loadSources() {
     const d = await getJSON(api('/sources'));

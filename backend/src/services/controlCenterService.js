@@ -485,9 +485,16 @@ async function orderWorkspace(orderId) {
   return { db_connected: true, ...r.workspace };
 }
 
+// DB: the Attention Center — 7 categories of what needs the operator today. Read-only.
+async function attentionCenter() {
+  if (!connected()) return { db_connected: false, categories: [], total: 0 };
+  const r = await require('./attentionCenterService').build();
+  return { db_connected: true, ...r };
+}
+
 module.exports = {
   summary, pipeline, inbox, drafts, kb, decide, chat, LEAD_STATE_LABELS,
   businessDashboard, sources, listUsers, createUser, setUserActive, kbPending, kbDecide, auditLog,
   // attention-first (pure + db)
-  orderDangers, orderTimelineSteps, attention, orderTimeline, orderWorkspace,
+  orderDangers, orderTimelineSteps, attention, orderTimeline, orderWorkspace, attentionCenter,
 };
