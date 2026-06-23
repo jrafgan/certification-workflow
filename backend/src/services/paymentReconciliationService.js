@@ -70,6 +70,24 @@ function analyzeConversation(messages = []) {
   };
 }
 
+// ─── Async: transcribe voice messages, then analyze (text + audio) ──────────────
+// For each message with a voice note, transcribe it (OpenAI) and merge the text into body so
+// agreed-total / payment amounts spoken in голосовые are also recognized. Falls back to text
+// when transcription is unavailable (no key / not wired). deps.readAudio reads the media buffer.
+async function analyzeConversationWithAudio(messages = [], deps = {}) {
+  const transcriber = deps.transcriber || require('./audioTranscriptionService');
+  const enriched = [];
+  for (const m of (Array.isArray(messages) ? messages : [])) {
+    let body = m.body || '';
+    try {
+      const t = await transcriber.transcribeVoiceMessage(m, deps);
+      if (t) body = `${body} ${t}`.trim();
+    } catch (_) { /* transcription is best-effort */ }
+    enriched.push({ ...m, body });
+  }
+  return analyzeConversation(enriched);
+}
+
 // ─── Gated proposal for the operator to confirm + record into «Декларация» ──────
 function buildProposal({ phone, legal_entity, analysis } = {}) {
   const a = analysis || {};
@@ -92,4 +110,4 @@ function buildProposal({ phone, legal_entity, analysis } = {}) {
   };
 }
 
-module.exports = { reconcile, analyzeConversation, buildProposal };
+module.exports = { reconcile, analyzeConversation, analyzeConversationWithAudio, buildProposal };
