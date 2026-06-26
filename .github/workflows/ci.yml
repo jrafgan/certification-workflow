@@ -20,6 +20,11 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
+      # INVARIANT GUARD — must run first and fail the pipeline immediately. The WhatsApp
+      # integration may never call read-state-mutation APIs (sendSeen/markUnread/…), which
+      # would clear unread on the operator's shared account. Enforced, not conventional.
+      - name: WhatsApp read-state guard (unread invariant)
+        run: node tests/whatsapp-readstate-guard.test.js
       # Pure-core suites — deterministic, no MongoDB / no network.
       - name: Unit tests
         run: |

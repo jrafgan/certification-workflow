@@ -15,6 +15,7 @@
     "test:whatsapp-test-mode": "node tests/whatsapp-test-mode.test.js",
     "test:whatsapp-lid": "node tests/whatsapp-lid-diagnostics.test.js",
     "test:whatsapp-lid-resolution": "node tests/whatsapp-lid-resolution.test.js",
+    "test:whatsapp-readstate-guard": "node tests/whatsapp-readstate-guard.test.js",
     "test:knowledge-base": "node tests/knowledge-base.test.js",
     "test:kb-operator-seed": "node tests/kb-operator-seed.test.js",
     "test:phone-mismatch": "node tests/phone-mismatch.test.js",

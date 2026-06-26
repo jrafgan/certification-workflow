@@ -10,6 +10,7 @@
 const express = require('express');
 const router  = express.Router();
 const cloud = require('../services/whatsappCloudService');
+const ingest = require('../services/whatsappIngestService');
 
 // GET — webhook verification.
 router.get('/', (req, res) => {
@@ -33,11 +34,19 @@ router.post('/', express.raw({ type: '*/*', limit: '2mb' }), async (req, res) =>
   res.sendStatus(200);
 });
 
-// handleIncoming — store/log incoming messages. Storage + inbox UI is wired next; for now log
-// so the webhook is verifiable end-to-end. Overridable for tests via setHandler.
+// handleIncoming — persist each incoming message via the ingest pipeline (stores a
+// WhatsAppMessage replica, idempotent on provider_message_id, then phone→order matching)
+// and log it. Read-only toward the world (never sends/writes the sheet). Resilient
+// per-message: a failure on one must not lose the others or block the 200 ack.
+// Overridable for tests via setHandler.
 let handleIncoming = async (messages) => {
   for (const m of messages) {
     console.log(`[wa-cloud] in от ${m.from}${m.name ? ' (' + m.name + ')' : ''}: ${m.is_voice ? '[голосовое]' : (m.text || '[' + m.type + ']')}`);
+    try {
+      await ingest.ingestIncoming(cloud.toIngestRaw(m));
+    } catch (err) {
+      console.error(`[wa-cloud] ingest failed for ${m.id}: ${err.message}`);
+    }
   }
 };
 function setHandler(fn) { if (typeof fn === 'function') handleIncoming = fn; }

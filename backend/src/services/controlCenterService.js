@@ -111,22 +111,36 @@ function recoveryCard(d) {
     body: d.proposed_text, reason: d.reason, evidence: evidenceList(d.evidence), confidence: d.confidence_band, editable: false,
     actions: ['approve', 'reject'], created_at: d.created_at, state: d.state, order_id: d.order_id ? String(d.order_id) : null };
 }
+// Incoming WhatsApp message — informational, NOT a gated decision (no approve/reject).
+// If matched to an order, order_id enables the "Open order"/"Timeline" buttons.
+const WA_MATCH_RU = { received: 'не разобрано', matched: 'привязано к заказу', needs_review: 'нужна проверка', unmatched: 'без заказа' };
+function whatsappMessageCard(m) {
+  const who = m.from_phone || m.lid || 'неизвестный';
+  const hasMedia = (m.attachments || []).length > 0;
+  return { type: 'whatsapp_message', id: String(m._id), title: `💬 WhatsApp · ${who}`,
+    subtitle: WA_MATCH_RU[m.match_status] || m.match_status || '', body: m.body || (hasMedia ? '[вложение]' : ''),
+    evidence: [], confidence: null, editable: false, actions: [],
+    created_at: m.received_at || m.created_at, order_id: m.matched_order_id ? String(m.matched_order_id) : null };
+}
 
 // ─── Agent Inbox: unified recent stream across all engines ───────────────────
 async function inbox({ limit = 60 } = {}) {
   if (!connected()) return { db_connected: false, items: [] };
-  const { LeadMessageDraft, EmailDraft, AuditPackage, ExtractionReview, DraftPackage, LeadRecovery } = M();
-  const [ld, ed, au, er, dp, lr] = await Promise.all([
+  const { LeadMessageDraft, EmailDraft, AuditPackage, ExtractionReview, DraftPackage, LeadRecovery, WhatsAppMessage } = M();
+  const [ld, ed, au, er, dp, lr, wa] = await Promise.all([
     LeadMessageDraft.find({ state: { $in: ['pending_approval', 'changes_requested'] } }).sort({ created_at: -1 }).limit(limit).lean(),
     EmailDraft.find({ state: { $in: ['pending_approval', 'changes_requested'] } }).sort({ created_at: -1 }).limit(limit).lean(),
     AuditPackage.find({ state: 'pending' }).sort({ created_at: -1 }).limit(limit).lean(),
     ExtractionReview.find({ status: 'pending' }).sort({ created_at: -1 }).limit(limit).lean(),
     DraftPackage.find({ status: 'pending' }).sort({ created_at: -1 }).limit(limit).lean(),
     LeadRecovery.find({ state: { $in: ['pending', 'changes_requested'] } }).sort({ created_at: -1 }).limit(limit).lean(),
+    // Incoming WhatsApp — informational (no approve/reject); newest first.
+    WhatsAppMessage.find({ direction: 'inbound' }).sort({ received_at: -1 }).limit(limit).lean(),
   ]);
   const items = [
     ...ld.map(leadDraftCard), ...ed.map(emailDraftCard), ...au.map(auditCard),
     ...er.map(reviewCard), ...dp.map(packageCard), ...lr.map(recoveryCard),
+    ...wa.map(whatsappMessageCard),
   ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, limit);
   return { db_connected: true, items };
 }

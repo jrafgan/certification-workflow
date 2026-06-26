@@ -34,7 +34,7 @@ function mapIncomingMessage(raw = {}, identity = null) {
   })) : [];
 
   return {
-    provider:            'whatsapp_web',
+    provider:            raw.provider || 'whatsapp_web',
     provider_message_id: raw.id || undefined,
     conversation_ref:    raw.from || undefined,
     direction:           'inbound',

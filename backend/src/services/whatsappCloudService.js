@@ -89,4 +89,23 @@ function parseIncoming(payload = {}) {
   return out;
 }
 
-module.exports = { isConfigured, graphVersion, sendText, verifyWebhook, verifySignature, parseIncoming };
+// ─── Inbound: map a parsed Cloud message → the provider-agnostic ingest shape ────
+// whatsappIngestService.ingestIncoming expects { id, from, body, timestamp(seconds),
+// provider, attachments:[{media_ref,mime_type}] }. PURE (no DB) — unit-testable.
+const TYPE_MIME = { image: 'image/*', audio: 'audio/ogg', voice: 'audio/ogg', video: 'video/mp4', document: 'application/octet-stream' };
+function toIngestRaw(parsed = {}) {
+  const attachments = parsed.media_id
+    ? [{ media_ref: parsed.media_id, mime_type: TYPE_MIME[parsed.type] || null }]
+    : [];
+  const ts = parsed.timestamp != null ? Number(parsed.timestamp) : undefined;
+  return {
+    id:          parsed.id,
+    from:        parsed.from,
+    body:        parsed.text || '',
+    timestamp:   Number.isFinite(ts) ? ts : undefined,
+    provider:    'cloud_api',
+    attachments,
+  };
+}
+
+module.exports = { isConfigured, graphVersion, sendText, verifyWebhook, verifySignature, parseIncoming, toIngestRaw };
