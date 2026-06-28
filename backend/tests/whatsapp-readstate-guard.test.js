@@ -8,8 +8,8 @@
 //
 // This guard fails CI if any read-state-mutation API appears in PRODUCTION code
 // (src/ + scripts/). It strips comments AND string/template literals first, so the
-// documented SAFETY COMMENTS that mention these APIs (e.g. whatsappWebClient.js: "it
-// never calls chat.sendSeen() / msg.markUnread()") do NOT trip the guard — only real
+// documented SAFETY COMMENTS that mention these APIs (e.g. a comment like "it never
+// calls chat.sendSeen() / msg.markUnread()") do NOT trip the guard — only real
 // code usage does.
 //
 // To intentionally allow a new API name, edit DENYLIST below (with review). To reference

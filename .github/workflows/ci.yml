@@ -47,10 +47,3 @@ jobs:
           file: ./Dockerfile
           push: false
           tags: certification-workflow-backend:ci
-      - name: Build WhatsApp image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./deploy/Dockerfile.whatsapp
-          push: false
-          tags: certification-workflow-whatsapp:ci

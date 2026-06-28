@@ -1,14 +1,14 @@
 # Production stack for AdminVPS (or any Docker host — provider-independent).
 #
-#   nginx (80/443, SSL)  ──►  backend (API + Control Center)  ──►  mongo
-#   certbot (renewals)                 whatsapp (agent, optional profile)
+#   nginx (80/443, SSL)  ──►  backend (API + Control Center + WhatsApp Cloud webhook)  ──►  mongo
+#   certbot (renewals)
 #
-# One source of truth for Mongo creds (.env) → the connection string is built here so
-# the app and the WhatsApp agent always agree. Only nginx publishes ports; everything
-# else talks over the private `internal` network.
+# WhatsApp runs via the Meta Cloud API webhook inside `backend` (POST /webhooks/whatsapp) —
+# no separate agent container. One source of truth for Mongo creds (.env) → the connection
+# string is built here. Only nginx publishes ports; everything else talks over the private
+# `internal` network.
 #
-# Bring up core:      docker compose up -d --build
-# Add WhatsApp agent:  docker compose --profile whatsapp up -d --build
+# Bring up:  docker compose up -d --build
 name: certification-workflow
 
 services:
@@ -56,27 +56,6 @@ services:
       retries: 3
       start_period: 20s
 
-  whatsapp:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.whatsapp
-    image: certification-workflow-whatsapp:latest
-    restart: unless-stopped
-    profiles: ["whatsapp"]                    # opt-in: needs a one-time QR scan from logs
-    env_file: [.env]
-    environment:
-      NODE_ENV: production
-      MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongo:27017/${MONGO_DB:-certification-workflow}?authSource=admin
-      WHATSAPP_SESSION_PATH: /data/wwebjs_auth
-      WHATSAPP_MEDIA_DIR: /data/whatsapp_media
-      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
-    depends_on:
-      mongo: { condition: service_healthy }
-    volumes:
-      - wa_auth:/data/wwebjs_auth             # persisted login — survives restarts
-      - wa_media:/data/whatsapp_media
-    networks: [internal]
-
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
@@ -109,7 +88,5 @@ volumes:
   mongo_data:
   mongo_config:
   uploads:
-  wa_auth:
-  wa_media:
   certbot_certs:
   certbot_www:

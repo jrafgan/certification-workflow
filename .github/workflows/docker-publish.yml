@@ -1,8 +1,8 @@
 name: Publish images (GHCR)
 
-# Builds the backend + WhatsApp images and pushes them to the GitHub Container Registry
-# (ghcr.io/<owner>/<repo>-backend, -whatsapp). The VPS can then `docker compose pull`
-# these instead of building on the server. Runs on main and on version tags.
+# Builds the backend image and pushes it to the GitHub Container Registry
+# (ghcr.io/<owner>/<repo>-backend). The VPS can then `docker compose pull`
+# instead of building on the server. Runs on main and on version tags.
 on:
   push:
     branches: [main]
@@ -24,8 +24,6 @@ jobs:
         include:
           - name: backend
             dockerfile: ./Dockerfile
-          - name: whatsapp
-            dockerfile: ./deploy/Dockerfile.whatsapp
     steps:
       - uses: actions/checkout@v4
 

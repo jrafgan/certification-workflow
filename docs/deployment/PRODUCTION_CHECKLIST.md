@@ -32,9 +32,10 @@ Tick every box before going live. Grouped by concern.
 - [ ] Russian UI renders correctly (labels, statuses, audit log).
 - [ ] An approve/reject action appears in the **Журнал действий** (audit log) with before/after.
 
-## WhatsApp agent (if enabled)
-- [ ] `TEST_MODE=true` for initial rollout; `WHATSAPP_TEST_CONTACT` set.
-- [ ] QR scanned once; `wa_auth` volume persists the session across `docker compose restart whatsapp`.
+## WhatsApp (Meta Cloud API)
+- [ ] Webhook verified in Meta → `https://<domain>/webhooks/whatsapp` (matching `WHATSAPP_VERIFY_TOKEN`).
+- [ ] `WHATSAPP_CLOUD_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` (working number 507391773), `WHATSAPP_APP_SECRET` set in `.env`.
+- [ ] A test inbound message appears in the inbox (`[wa-cloud] in от …` in backend logs).
 - [ ] Only ONE backend instance runs (the cron scheduler is in-process — do not scale `backend` horizontally without externalizing cron).
 
 ## Backups & recovery

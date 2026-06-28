@@ -4,7 +4,6 @@
 | Data | Where | Backed up? | Notes |
 |------|-------|-----------|-------|
 | Business state (orders, leads, drafts, audit log, users, KB cache) | MongoDB (`mongo_data` volume) | **Yes** | Captured by `mongodump`. |
-| WhatsApp login session | `wa_auth` volume | **Yes** | Avoids re-scanning the QR after restore. |
 | Uploaded receipts/layouts/originals | `uploads` volume | **Yes** | Local files. |
 | Declaration sheet, Knowledge Base source | Google (Sheets) | External | Mongo is a replica; Google is the source of truth for those. |
 | Secrets / config | `.env`, `keys/` | **Manual** | Copy these off-server yourself; they are not in the tarball except an `.env.snapshot`. |
@@ -13,7 +12,7 @@
 ```bash
 sudo bash deploy/backup.sh           # → ./backups/backup-YYYYMMDD-HHMMSS.tar.gz
 ```
-- Self-contained tarball: Mongo archive (gzipped) + `wa_auth` + `uploads` + `.env.snapshot`.
+- Self-contained tarball: Mongo archive (gzipped) + `uploads` + `.env.snapshot`.
 - **Automate (daily 03:30, keep 14 days):**
   ```cron
   30 3 * * * cd /opt/certification-workflow && bash deploy/backup.sh >> /var/log/cw-backup.log 2>&1

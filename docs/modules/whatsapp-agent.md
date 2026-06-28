@@ -1,9 +1,15 @@
 # Module: WhatsApp Agent
 
-- **Status:** built
+> **⚠️ SUPERSEDED (2026-06-29).** The `whatsapp-web.js` transport described below was
+> **removed**. The live channel is the **Meta WhatsApp Cloud API** on the working number
+> **507391773** — see [whatsapp-cloud-inbox.md](./whatsapp-cloud-inbox.md). The old
+> `TEST_MODE` / `WHATSAPP_TEST_CONTACT` sandbox (test contact «Мой Билайн») no longer
+> exists. The ingest/matching/LID services below are still in use; the transport is not.
+
+- **Status:** superseded (transport removed; ingest/matching live via Cloud API)
 - **Owner:** —
-- **Code:** `backend/src/integrations/whatsappWebClient.js`, `services/whatsappIngestService.js`, `whatsappMatchService.js`, `whatsappTestModeService.js`, `whatsappLidService.js`; `scripts/whatsapp-listen.js`
-- **Last updated:** 2026-06-21
+- **Code:** `services/whatsappCloudService.js`, `routes/whatsappCloud.js`, `services/whatsappIngestService.js`, `whatsappMatchService.js`, `whatsappLidService.js`
+- **Last updated:** 2026-06-29
 
 ---
 

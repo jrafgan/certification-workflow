@@ -29,11 +29,6 @@ docker compose exec -T mongo sh -c \
   "mongorestore --username \"$MONGO_ROOT_USERNAME\" --password \"$MONGO_ROOT_PASSWORD\" --authenticationDatabase admin --db \"$DB\" --drop --archive --gzip" \
   < "$STAGE/mongo-$DB.archive.gz"
 
-if [ -f "$STAGE/wa_auth.tgz" ]; then
-  echo "==> Restore WhatsApp session"
-  docker run --rm -v certification-workflow_wa_auth:/v -v "$STAGE":/in alpine \
-    sh -c "cd /v && rm -rf ./* && tar xzf /in/wa_auth.tgz"
-fi
 if [ -f "$STAGE/uploads.tgz" ]; then
   echo "==> Restore uploads"
   docker run --rm -v certification-workflow_uploads:/v -v "$STAGE":/in alpine \

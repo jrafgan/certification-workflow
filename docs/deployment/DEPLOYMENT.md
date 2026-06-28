@@ -44,13 +44,12 @@ docker compose up -d --build              # start the core stack
 Open `https://<your-domain>` → log in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`, then
 **change the admin password and create real operator accounts**.
 
-## 4. Enable the WhatsApp agent (when ready)
-```bash
-docker compose --profile whatsapp up -d --build
-docker compose logs -f whatsapp           # scan the printed QR with the business phone (once)
-```
-The session persists in the `wa_auth` volume — restarts won't re-prompt. Keep
-`TEST_MODE=true` until you've verified behaviour on the live number.
+## 4. WhatsApp (Meta Cloud API)
+WhatsApp runs inside the `backend` container via the Meta Cloud API webhook — no separate
+agent and no QR scan. In Meta for Developers → your App → WhatsApp, point the webhook
+callback to `https://<your-domain>/webhooks/whatsapp` (using `WHATSAPP_VERIFY_TOKEN`), and
+set `WHATSAPP_CLOUD_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` (the working number **507391773**)
+and `WHATSAPP_APP_SECRET` in `.env`. Inbound messages are received/persisted only.
 
 ## 5. Continuous deployment (optional)
 Add repo secrets `SSH_HOST`, `SSH_USER`, `SSH_KEY` (+ optional `SSH_PORT`, `APP_DIR`).
