@@ -47,7 +47,16 @@ const whatsAppMessageSchema = new Schema({
 
   // Raw + normalized phone (normalized via phoneUtils.matchKey at ingest)
   from_phone:     { type: String, trim: true },
+  to_phone:       { type: String, trim: true }, // recipient (set on outbound operator replies)
   phone_key:      { type: String, trim: true }, // canonical match key (last 9 local digits)
+
+  // Operator attribution (set on direction:'outbound' replies the operator sends from the
+  // panel) — powers the per-operator counter (services/operatorStatsService.js). The
+  // question_* fields classify the inbound message THIS reply answered (leadIntentService).
+  handled_by:        { type: Schema.Types.ObjectId, ref: 'User' },
+  handled_at:        { type: Date },
+  question_intent:   { type: String, trim: true }, // e.g. 'price_question' | 'docs_question'
+  question_category: { type: String, trim: true }, // e.g. 'certificate' | 'declaration'
 
   // WhatsApp LID (Linked Identity) — set when the sender is addressed by "<digits>@lid"
   // instead of a phone. from_phone/phone_key above are then either the RESOLVED phone
@@ -61,9 +70,21 @@ const whatsAppMessageSchema = new Schema({
   attachments: { type: [attachmentSchema], default: [] },
   sent_at:     { type: Date },
 
+  // Group / addressing context (WhatsApp Cloud API has no groups — these are populated by
+  // the GOWA transport only). is_group=false ⇒ a 1:1 direct chat. addressed_me marks whether
+  // a message actually reached the operator: always true for direct; for a group it is true
+  // only when the operator (OPERATOR_WHATSAPP_NUMBERS) was @mentioned, was replied to, or the
+  // text shows certification interest. addressed_reason records which rule fired.
+  chat_id:          { type: String, trim: true }, // group JID (…@g.us) or contact JID
+  is_group:         { type: Boolean, default: false },
+  group_subject:    { type: String, trim: true },
+  addressed_me:     { type: Boolean, default: true },
+  addressed_reason: { type: String, enum: ['direct', 'mention', 'reply', 'keyword', null], default: null },
+
   // Matching outcome
   match_status:  { type: String, enum: WHATSAPP_MATCH_STATUSES, default: 'received' },
-  matched_order_id: { type: Schema.Types.ObjectId, ref: 'Order' }, // set only when uniquely matched
+  matched_order_id: { type: Schema.Types.ObjectId, ref: 'Order' }, // set only when uniquely matched to a Mongo Order
+  matched_sheet_row: { type: String, trim: true }, // the matched «Декларация» row (the order IS a sheet row)
   candidates:    { type: [candidateSchema], default: [] },
   match_confidence: { type: String, enum: ['HIGH', 'MEDIUM', 'LOW', null], default: null },
 
@@ -79,6 +100,9 @@ whatsAppMessageSchema.index({ phone_key: 1 });
 whatsAppMessageSchema.index({ lid: 1 });
 whatsAppMessageSchema.index({ provider_message_id: 1 }, { unique: true, sparse: true });
 whatsAppMessageSchema.index({ match_status: 1 });
+whatsAppMessageSchema.index({ handled_by: 1, handled_at: 1 }); // per-operator counter queries
+whatsAppMessageSchema.index({ body: 'text' });                 // full-text search of the archive
+whatsAppMessageSchema.index({ received_at: -1 });
 
 const WhatsAppMessage = mongoose.model('WhatsAppMessage', whatsAppMessageSchema);
 

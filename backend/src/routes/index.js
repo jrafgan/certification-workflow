@@ -39,6 +39,8 @@ router.use('/lab-emails', require('./labEmails'));
 router.use('/client-entity', require('./clientEntity'));
 router.use('/payments', require('./payments'));
 router.use('/whatsapp', require('./whatsappSend'));
+router.use('/stats', require('./stats'));                 // per-operator work counter
+router.use('/first-contact', require('./firstContact'));  // cold-number verification (gated)
 router.use('/control-center', require('./controlCenter'));
 
 module.exports = router;

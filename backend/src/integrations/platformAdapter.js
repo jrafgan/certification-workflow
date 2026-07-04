@@ -33,4 +33,35 @@ const StubAdapter = {
   },
 };
 
-module.exports = { StubAdapter, normalizeInbound };
+// RealAdapter — dispatches delivery to a live platform client by draft.platform. Telegram is
+// wired (independent of Meta); Instagram/Facebook fall back to the stub until their Meta
+// app review + business verification clears. `receive` stays generic (the webhook route
+// pre-normalizes platform-specific payloads). deps.telegram is injectable for tests.
+const RealAdapter = {
+  name: 'real',
+  receive(raw) { return normalizeInbound(raw); },
+  async deliver(draft, deps = {}) {
+    if (draft.platform === 'telegram') {
+      // Prefer the USERBOT (mtcute, sends as the operator's account) when running; else Bot API.
+      const userbotUrl = process.env.TG_USERBOT_SEND_URL;
+      if (userbotUrl) {
+        try {
+          const r = await (deps.fetch || globalThis.fetch)(userbotUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: draft.to_handle, text: draft.proposed_text }) });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok && j.ok) return { ok: true, ref: `tg-userbot:${j.message_id}`, delivered: true };
+          return { ok: false, ref: null, delivered: false, detail: j };
+        } catch (err) { return { ok: false, ref: null, delivered: false, detail: err.message }; }
+      }
+      const telegram = deps.telegram || require('./telegramClient');
+      if (telegram.isConfigured()) {
+        const r = await telegram.sendMessage(draft.to_handle, draft.proposed_text, deps);
+        if (!r.ok) return { ok: false, ref: null, delivered: false, detail: r };
+        return { ok: true, ref: `telegram:${r.message_id}`, delivered: true };
+      }
+    }
+    // No live client for this platform yet → behave like the stub (records intent, no send).
+    return StubAdapter.deliver(draft);
+  },
+};
+
+module.exports = { StubAdapter, RealAdapter, normalizeInbound };

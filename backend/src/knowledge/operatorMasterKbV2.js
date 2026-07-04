@@ -13,6 +13,11 @@
 //   • hold_for_review    → seeded as PENDING (not activated) because it conflicts with
 //                          already-canonical operational data; needs an operator decision.
 
+// Prices/validity/samples come from the operator-tunable config (env-overridable) so the
+// KB the agent quotes to clients always matches the calculation engine. See config/pricing.js.
+const { PRICING, CURRENCY } = require('../config/pricing');
+const DS = PRICING['ДС'], SS = PRICING['СС'];
+
 const VERSION = 'V2';
 const SOURCE  = 'operator_master_kb_v2';
 const TITLE   = 'Operator Master Knowledge Base V2';
@@ -40,17 +45,27 @@ const entries = [
   }),
 
   // ── Certificates (СС) ──
-  RULE('Certificates', 'Сертификат соответствия (СС) оформляется через лабораторию Бермет; требуется 2 образца на каждый состав.'),
-  PRICE('Стоимость СС: от 35 000 сом.', 35000),
+  RULE('Certificates', `Сертификат соответствия (СС) оформляется через лабораторию Бермет (Кыргыз Тест); требуется ${SS.samples_per_composition} образца на каждый состав. Срок действия ${SS.validity}.`),
+  RULE('Certificates', 'Запуск СС: сертификат можно легко запустить через Бермет (Кыргыз Тест) ТОЛЬКО когда заявитель и производитель у клиента — одно и то же лицо. Если заявитель ≠ производитель — так просто не запустить, нужно уточнить у оператора.', {
+    value: { kind: 'certificate_launch_condition', requires: 'applicant_equals_manufacturer', lab: 'Бермет (Кыргыз Тест)' },
+  }),
+  PRICE(`Стоимость СС (местные ИП/ОсОО): от ${SS.base} ${CURRENCY}; дополнительный протокол +${SS.additional_pi} ${CURRENCY}.`, SS.base),
+  RULE('Certificates', `СС для ЗАРУБЕЖНЫХ юрлиц: ${SS.foreign_legal_entity.base} ${CURRENCY}; дополнительный протокол испытания +${SS.foreign_legal_entity.additional_pi} ${CURRENCY}.`, {
+    value: { kind: 'certificate_pricing', segment: 'foreign_legal_entity', base: SS.foreign_legal_entity.base, additional_pi: SS.foreign_legal_entity.additional_pi },
+  }),
   TIME('Certificates', 'Срок изготовления СС: от 1 месяца до 1.5 месяцев.', { value: 1, value_to: 1.5, unit: 'месяц' }),
   FACT('Certificates', 'Срок действия СС: 1 год.', { possibly_outdated: true }),
   RULE('Certificates', 'Для СС могут потребоваться дополнительные документы: техпаспорт нежилого помещения, договор аренды помещения.'),
 
   // ── Declarations (ДС) ──
-  RULE('Declarations', 'Декларация соответствия (ДС) оформляется через лабораторию Дастан; требуется 1 образец на каждый состав.'),
-  PRICE('Стоимость ДС: от 15 000 сом.', 15000),
+  RULE('Declarations', 'Декларация соответствия (ДС): Дастану БОЛЬШЕ НЕ ПИШЕМ (изменились рабочие процессы; орган сообщил об изменении требований в пятницу). Перед запуском ДС агент ОБЯЗАН уточнить у клиента: есть ли у него документы на швейный цех — от этого зависят цена, срок действия, гарантия и ОРГАН выдачи. Образцов: ВСЕГДА 2 на каждый состав (независимо от документов на цех).'),
+  RULE('Declarations', `ДС, ЕСТЬ документы на цех: ${DS.variants.with_workshop.base} ${CURRENCY} (документ + 1-й протокол), доп. протокол +${DS.variants.with_workshop.additional_pi} ${CURRENCY}; срок действия ${DS.variants.with_workshop.validity}; ${DS.variants.with_workshop.samples_per_composition} образца на состав; С ГАРАНТИЕЙ. ТРЕБУЕТСЯ: тех. паспорт на цех ИЛИ договор аренды цеха + свидетельство ИП/ОсОО + оплата + образец товара. Орган: Айсулуу <servisstan@internet.ru>.`, {
+    value: { kind: 'declaration_pricing', variant: 'with_workshop', base: DS.variants.with_workshop.base, additional_pi: DS.variants.with_workshop.additional_pi, validity: DS.variants.with_workshop.validity, samples_per_composition: DS.variants.with_workshop.samples_per_composition, guarantee: true, requires: ['тех_паспорт_цеха_или_договор_аренды', 'свидетельство_ИП_ОсОО', 'оплата', 'образец'] },
+  }),
+  RULE('Declarations', `ДС, НЕТ документов на цех: ${DS.variants.no_workshop.base} ${CURRENCY} (документ + 1-й протокол), доп. протокол +${DS.variants.no_workshop.additional_pi} ${CURRENCY}; срок действия ${DS.variants.no_workshop.validity}; ${DS.variants.no_workshop.samples_per_composition} образца на состав; БЕЗ ГАРАНТИИ — протокол оформляется из Казахстана, есть риск, что таможня не пропустит. Орган: Айгерим <svnsert7@gmail.com>.`, {
+    value: { kind: 'declaration_pricing', variant: 'no_workshop', base: DS.variants.no_workshop.base, additional_pi: DS.variants.no_workshop.additional_pi, validity: DS.variants.no_workshop.validity, samples_per_composition: DS.variants.no_workshop.samples_per_composition, guarantee: false, note: 'протокол из Казахстана, риск на таможне' },
+  }),
   TIME('Declarations', 'Срок изготовления ДС: около 2 недель.', { value: 2, unit: 'недель' }),
-  FACT('Declarations', 'Срок действия ДС: 3 года.', { possibly_outdated: true }),
   RULE('Declarations', 'В Кыргызстане ДС оформляется только на ИП или ОсОО Кыргызстана.'),
   RULE('Declarations', 'Декларация — центральный рабочий документ: связывает WhatsApp, Email, клиентов, оплаты и статусы. Декларации доверяем; статусы допускается проверять и аудировать.'),
   RULE('Declarations', 'Приоритет источника телефона/WhatsApp: номер из Декларации авторитетнее номера из Новой формы. Декларация проверяется оператором вручную; Новая форма заполняется клиентом и может содержать опечатки, устаревшие, ассистентские или временные номера. Правила сопоставления: 1) телефон Декларации — первичная идентичность; 2) телефон Новой формы — только вторичное свидетельство; 3) никогда не перезаписывать телефон Декларации из Новой формы; 4) при расхождении сформировать заметку для проверки «Phone mismatch detected. Declaration phone retained as authoritative.». Не авто-исправлять, не авто-обновлять.', {
@@ -94,6 +109,9 @@ const entries = [
   RULE('Declarations', 'Отказное письмо — отдельный документ.'),
   PRICE('Стоимость отказного письма: 5 000 сом.', 5000),
   RULE('Declarations', 'СГР — отдельный вид документа; стоимость и сроки определяются отдельно.'),
+  RULE('Declarations', 'ГТД (грузовая таможенная декларация): если товар ПРОИЗВЕДЁН в Кыргызстане — ГТД НЕ нужна. Если товар ИМПОРТНЫЙ — без ГТД оформить СС или ДС НЕВОЗМОЖНО; допустимая альтернатива — инвойс на товар. Агент обязан уточнить происхождение товара (произведён в КР или импортирован) и при импорте запросить ГТД либо инвойс.', {
+    value: { kind: 'gtd_requirement', produced_in_kg: { gtd_required: false }, imported: { gtd_required: true, alternative: 'invoice', without_gtd_or_invoice: 'cannot_issue_SS_or_DS' } },
+  }),
 
   // ── TN VED ──
   RULE('TN VED', 'Трикотаж — группа ТН ВЭД 61. Признаки: тянется, петлевая структура. Примеры: футболки, майки, худи, свитшоты.', { value: { group: '61' } }),
@@ -105,14 +123,17 @@ const entries = [
 
   // ── PI Calculations (ПИ / протоколы испытаний) ──
   RULE('PI Calculations', 'Первый ПИ входит в стоимость документа.'),
-  RULE('PI Calculations', 'Дополнительный ПИ для ДС: +7 000 сом.', { value: { amount: 7000, currency: 'сом', doc: 'ДС' }, possibly_outdated: true }),
-  RULE('PI Calculations', 'Дополнительный ПИ для СС: +9 000 сом.', { value: { amount: 9000, currency: 'сом', doc: 'СС' }, possibly_outdated: true }),
+  RULE('PI Calculations', `Дополнительный ПИ (доп. протокол) для ДС: с документами на цех +${DS.variants.with_workshop.additional_pi} ${CURRENCY}; без документов на цех +${DS.variants.no_workshop.additional_pi} ${CURRENCY}.`, { value: { with_workshop: DS.variants.with_workshop.additional_pi, no_workshop: DS.variants.no_workshop.additional_pi, currency: 'сом', doc: 'ДС' } }),
+  RULE('PI Calculations', `Дополнительный ПИ (доп. протокол) для СС: местные +${SS.additional_pi} ${CURRENCY}; зарубежные юрлица +${SS.foreign_legal_entity.additional_pi} ${CURRENCY}.`, { value: { amount: SS.additional_pi, foreign_amount: SS.foreign_legal_entity.additional_pi, currency: 'сом', doc: 'СС' } }),
   RULE('PI Calculations', 'Количество ПИ определяется количеством разных составов и требованиями лаборатории.'),
   RULE('PI Calculations', 'Агент никогда не утверждает стоимость сам: показывает расчёт, количество ПИ, основания, итоговую сумму и уровень уверенности; финальную стоимость подтверждает оператор.'),
 
   // ── Laboratories ──
-  RULE('Laboratories', 'Бермет — обычно сертификаты (СС), 2 образца на состав.'),
-  RULE('Laboratories', 'Дастан — обычно декларации (ДС), 1 образец на состав.'),
+  RULE('Laboratories', 'Бермет (Кыргыз Тест) — сертификаты (СС), 2 образца на состав.'),
+  RULE('Laboratories', 'Декларации (ДС): орган зависит от документов на швейный цех (два разных органа). Дастану больше не пишем. ЕСТЬ документы на цех → Айсулуу <servisstan@internet.ru>; НЕТ документов на цех → Айгерим <svnsert7@gmail.com>.'),
+  RULE('Laboratories', 'ВНУТРЕННЯЯ информация — ТОЛЬКО для агента и оператора, НИКОГДА не сообщать клиенту: имена и почты органов/лабораторий (Айсулуу <servisstan@internet.ru> — есть документы на цех; Айгерим <svnsert7@gmail.com> — нет документов на цех). Клиенту НЕ называть ни email, ни имя органа. Email — канал только между нами и лабораторией; заявку на почту отправляет оператор/агент, клиент в переписку с лабораторией не вовлекается.', {
+    value: { kind: 'internal_only', audience: ['agent', 'operator'], never_disclose_to_client: true, items: ['lab_recipient_names', 'lab_recipient_emails'] },
+  }),
   RULE('Laboratories', 'Тема письма в лабораторию: «ИП Иванов» или «ОсОО …». Повторные заказы: «ИП Иванов 2», «ИП Иванов 3», «ИП Иванов 4».'),
   RULE('Laboratories', 'В письме в лабораторию указывается: нужен ДС или СС, количество дополнительных ПИ, необходимые приложения.'),
 
@@ -125,7 +146,10 @@ const entries = [
   PRICE('Дополнительная услуга Wildbox: 1 700 сом.', 1700),
 
   // ── Samples ──
-  RULE('Samples', 'Образцы: ДС — 1 образец на каждый состав; СС — 2 образца на каждый состав. Образцы обязательны.'),
+  RULE('Samples', 'Образцы: ВСЕГДА по 2 образца на каждый состав — и для ДС, и для СС (независимо от документов на цех). Образцы обязательны.'),
+  RULE('Samples', 'Пакет с образцами ОБЯЗАТЕЛЬНО подписать: указать, какому юр. лицу (заявителю) принадлежат образцы — чтобы не перепутать образцы разных клиентов и заказов.', {
+    value: { kind: 'sample_labeling', requirement: 'label_bag_with_legal_entity', reason: 'avoid_mixups_between_clients_orders' },
+  }),
   RULE('Samples', 'Запуск может быть произведён после оплаты / получения заявки / получения документов заявителя — даже если образцы ещё не поступили. Агент обязан контролировать поступление образцов.'),
 
   // ── Client Communication (process) ──
@@ -179,16 +203,17 @@ const entries = [
 
   // ── Client FAQ — готовые ОТВЕТЫ клиенту (источник ответов агента). Составлены из
   //    одобренных фактов БЗ выше; цены только «от …», точную сумму подтверждает специалист. ──
-  FACT('Client FAQ', 'Декларация (ДС): стоимость от 15 000 сом, изготовление около 2 недель, действует 3 года. Точную сумму подтвердит специалист после расчёта.', { value: { kind: 'client_faq', q: 'стоимость и сроки ДС' } }),
-  FACT('Client FAQ', 'Сертификат (СС): стоимость от 35 000 сом, изготовление от 1 до 1.5 месяцев, действует 1 год. Точную сумму подтвердит специалист.', { value: { kind: 'client_faq', q: 'стоимость и сроки СС' } }),
+  FACT('Client FAQ', `Декларация (ДС): стоимость от ${DS.variants.with_workshop.base} сом (с документами на цех) / ${DS.variants.no_workshop.base} сом (без документов), изготовление около 2 недель, срок действия от 1 до 3 лет (зависит от документов на цех). Точную сумму подтвердит специалист после расчёта.`, { value: { kind: 'client_faq', q: 'стоимость и сроки ДС' } }),
+  FACT('Client FAQ', `Сертификат (СС): для местных ИП/ОсОО от ${SS.base} сом; для зарубежных юрлиц ${SS.foreign_legal_entity.base} сом. Изготовление от 1 до 1.5 месяцев, действует 1 год. Точную сумму подтвердит специалист.`, { value: { kind: 'client_faq', q: 'стоимость и сроки СС' } }),
   FACT('Client FAQ', 'Отказное письмо — отдельный документ, стоимость 5 000 сом.', { value: { kind: 'client_faq', q: 'отказное письмо' } }),
-  FACT('Client FAQ', 'ПИ — это протокол испытаний. Первый ПИ входит в стоимость документа; дополнительные нужны при разных составах товара (доп. ПИ: ДС +7 000 сом, СС +9 000 сом).', { value: { kind: 'client_faq', q: 'что такое ПИ' } }),
+  FACT('Client FAQ', `ПИ — это протокол испытаний. Первый ПИ входит в стоимость документа; дополнительные нужны при разных составах товара (доп. ПИ: ДС с документами на цех +${DS.variants.with_workshop.additional_pi} сом, ДС без документов +${DS.variants.no_workshop.additional_pi} сом, СС для местных ИП/ОсОО +${SS.additional_pi} сом, СС для зарубежных юрлиц +${SS.foreign_legal_entity.additional_pi} сом).`, { value: { kind: 'client_faq', q: 'что такое ПИ' } }),
   FACT('Client FAQ', 'ТН ВЭД — код товара. Трикотаж — группа 61 (тянется), швейка — группа 62 (не тянется). Трикотаж и швейка, как и детское и взрослое, оформляются отдельно. Если кода нет — поможем подобрать.', { value: { kind: 'client_faq', q: 'что такое ТН ВЭД' } }),
   FACT('Client FAQ', 'Для заявки нужны: название товара, состав, заявитель, производитель, ТН ВЭД, а также свидетельство ИП/ОсОО.', { value: { kind: 'client_faq', q: 'какие документы нужны' } }),
-  FACT('Client FAQ', 'Образцы обязательны (ДС — 1 на состав, СС — 2 на состав), но не блокируют старт: запуск возможен после оплаты/получения заявки, даже если образцы ещё не поступили.', { value: { kind: 'client_faq', q: 'можно ли без образцов' } }),
+  FACT('Client FAQ', `Образцы обязательны — по ${SS.samples_per_composition} на каждый состав (и для ДС, и для СС), но не блокируют старт: запуск возможен после оплаты/получения заявки, даже если образцы ещё не поступили. Пакет с образцами подпишите: чьи это образцы (какое юр. лицо).`, { value: { kind: 'client_faq', q: 'можно ли без образцов' } }),
   FACT('Client FAQ', 'Можно запустить при частичной оплате (минимум 10 000 сом; для крупных заказов — не менее 60%). Оригинал документа выдаётся после полной оплаты.', { value: { kind: 'client_faq', q: 'оплата частями' } }),
   FACT('Client FAQ', 'Объединять в один документ можно только совместимые категории. Трикотаж и швейка, а также детское и взрослое — оформляются отдельными документами.', { value: { kind: 'client_faq', q: 'можно ли объединить товары' } }),
   FACT('Client FAQ', 'Для зарубежного заказчика нужны: название компании, страна, ИНН/налоговый номер, реквизиты; в дополнениях указывается, что товар произведён по заказу данного юр. лица.', { value: { kind: 'client_faq', q: 'зарубежная компания' } }),
+  FACT('Client FAQ', 'Нужна ли ГТД? Если товар произведён в Кыргызстане — ГТД (грузовая таможенная декларация) не нужна. Если товар импортный — без ГТД оформить сертификат (СС) или декларацию (ДС) невозможно; как альтернативу можно предоставить инвойс на товар.', { value: { kind: 'client_faq', q: 'нужна ли ГТД' } }),
 
   // ── Client-facing lifecycle narrative (V2 §15) — APPROVED with a mapping onto the
   //    canonical 7 Declaration sheet statuses. Operator decision: this is an explanation

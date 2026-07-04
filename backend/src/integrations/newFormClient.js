@@ -165,6 +165,18 @@ async function readApplications() {
   return { tab: r.responsesTab, row_count: dataRows.length, ...mapped };
 }
 
+// readFormRows() — RAW header + dataRows of the ACTIVE responses tab (read-only, archive
+// excluded). Needed by newApplicationProposalService, which maps each row via
+// formFieldMapper.mapRow to classify (ДС/СС), count ПИ and draft a client reply.
+async function readFormRows() {
+  const spreadsheetId = process.env.NEW_FORM_SHEET_ID;
+  if (!spreadsheetId) return { ok: false, reason: 'sheet_not_configured' };
+  const r = await inspect();
+  if (!r.ok || !r.responsesTab) return { ok: false, reason: r.reason || 'no_active_responses_tab' };
+  const { header, dataRows } = await _readTab(spreadsheetId, r.responsesTab);
+  return { ok: true, tab: r.responsesTab, header, dataRows };
+}
+
 // readArchive() — EXPLICIT historical reference only. Reads the "Завершенные"
 // archive tab(s). Rows are flagged is_active:false / source:'archive'. Must NOT
 // be used as a primary matching source; a row here is not an active order.
@@ -196,7 +208,7 @@ function activeTakesPrecedence(activeCandidates = [], archiveCandidates = []) {
 }
 
 module.exports = {
-  inspect, readActiveResponses, readArchive, readApplications,
+  inspect, readActiveResponses, readArchive, readApplications, readFormRows,
   classifyTab, pickResponsesTab, activeTakesPrecedence,
   _setSheetsClient,
 };

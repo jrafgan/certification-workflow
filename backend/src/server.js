@@ -22,7 +22,16 @@ const PORT = parseInt(process.env.PORT, 10) || 3000;
 // is available for the X-Hub-Signature-256 HMAC check. No auth (Meta calls it).
 app.use('/webhooks/whatsapp', require('./routes/whatsappCloud'));
 
+// PUBLIC GOWA gateway webhook — raw body for the X-Hub-Signature-256 HMAC check (before json).
+app.use('/webhooks/gowa', require('./routes/gowa'));
+// Telegram USERBOT (mtcute) webhook — raw body for its HMAC check (before json).
+app.use('/webhooks/tg-userbot', require('./routes/tgUserbot'));
+
 app.use(express.json());
+
+// PUBLIC Telegram Bot webhook — JSON + secret-token header (no HMAC), so it sits AFTER
+// express.json. No auth (Telegram calls it). Social-lead ingest → operator-gated drafts.
+app.use('/webhooks/telegram', require('./routes/telegram'));
 
 // ─── Sessions (login required — no anonymous access) ──────────────────────────
 const session    = require('express-session');

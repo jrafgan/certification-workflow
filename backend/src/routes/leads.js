@@ -18,6 +18,7 @@
 const express = require('express');
 const router  = express.Router();
 const svc = require('../services/leadConversionService');
+const { RealAdapter } = require('../integrations/platformAdapter');
 
 router.get('/', async (req, res, next) => {
   try {
@@ -67,7 +68,8 @@ router.post('/drafts/:id/decision', async (req, res, next) => {
 
 router.post('/drafts/:id/release', async (req, res, next) => {
   try {
-    const r = await svc.releaseDraft(req.params.id);
+    // Use the live platform adapter (Telegram wired; IG/FB fall back to stub until Meta clears).
+    const r = await svc.releaseDraft(req.params.id, { adapter: RealAdapter });
     res.status(r.ok ? 200 : 502).json(r);
   } catch (err) { next(err); }
 });

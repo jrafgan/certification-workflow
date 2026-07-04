@@ -16,6 +16,9 @@ const { LeadMessageDraft, DRAFT_KINDS: LEAD_DRAFT_KINDS, DRAFT_STATES: LEAD_DRAF
 const { User, ROLES } = require('./User');
 const { AuditLog } = require('./AuditLog');
 const { PhoneEntityLink, LINK_SOURCES, LINK_STATUSES } = require('./PhoneEntityLink');
+const { FirstContactProposal, FIRST_CONTACT_STATES, FIRST_CONTACT_DECISIONS } = require('./FirstContactProposal');
+const { InboxThreadState } = require('./InboxThreadState');
+const { NewApplicationProposal, NEW_APPLICATION_PROPOSAL_STATUSES } = require('./NewApplicationProposal');
 
 module.exports = {
   Order,
@@ -23,6 +26,12 @@ module.exports = {
   PhoneEntityLink,
   LINK_SOURCES,
   LINK_STATUSES,
+  FirstContactProposal,
+  FIRST_CONTACT_STATES,
+  FIRST_CONTACT_DECISIONS,
+  InboxThreadState,
+  NewApplicationProposal,
+  NEW_APPLICATION_PROPOSAL_STATUSES,
   Declaration,
   LabCommThread,
   WhatsAppMessage,
