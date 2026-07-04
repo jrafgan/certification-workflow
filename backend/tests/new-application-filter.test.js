@@ -1,10 +1,10 @@
 'use strict';
 
-// Tests for the «Новые заявки» decision table in taskInboxService.buildTasks (per operator
-// 2026-07-04). An application is HIDDEN (old) when: in «Декларация» / paid; refused (regex or
-// semantic); we sent the calc and the client is silent > SILENCE_AFTER_CALC days; or > ABANDONED
-// days since the client's last message AND we never replied. Otherwise SHOWN, with
-// needs_calc_reply = we haven't sent the calc yet. Also unit-covers weSentCalc.
+// Tests for classifyApplication (taskInboxService) — «новая заявка или нет» per the operator's
+// 2026-07-04 rules, in priority order: (1) in «Декларация» → оформляется; (2) paid; (3) refused;
+// (4) not responding (>30d after OUR last message, no reply since); (7) never replied → SHOW +
+// send-offer (NOT hidden); (5) offer already sent, client engaging → stays new; else → send offer.
+// Plus a couple of buildTasks integration checks + weSentCalc.
 //
 // Run: node tests/new-application-filter.test.js
 
@@ -17,85 +17,96 @@ function test(name, fn) {
   catch (err) { fail++; failures.push({ name, err }); console.log(`  FAIL  ${name}\n        ${err.message}`); }
 }
 
+const DAY = 86400000;
 const NOW = Date.parse('2026-07-04T12:00:00Z');
-const key = (p) => String(p).replace(/\D/g, '').slice(-9);
-const daysAgoMs = (d) => NOW - d * 86400000;
+const daysAgo = (d) => NOW - d * DAY;
+const cls = (sig, decl = null) => svc.classifyApplication(sig, decl, { now: NOW });
+
+console.log('\n[classifyApplication — priority rules]');
+
+test('1) in «Декларация» → not new (оформляется)', () => {
+  const r = cls({ inboundTexts: ['передумали'] }, { status: 'Запустить', paid: 0 });   // beats refuse
+  assert.strictEqual(r.isNew, false);
+  assert.ok(/оформляется/i.test(r.reason));
+});
+
+test('2) client said paid → not new', () => {
+  const r = cls({ inboundTexts: ['оплатила, вот чек'] }, null);
+  assert.strictEqual(r.isNew, false);
+  assert.ok(/оплатил/i.test(r.reason));
+});
+
+test('3) refused (regex or semantic) → not new', () => {
+  assert.strictEqual(cls({ inboundTexts: ['спасибо, передумали'] }, null).isNew, false);
+  assert.strictEqual(cls({ semanticRefused: true, inboundTexts: ['ну не знаю…'] }, null).isNew, false);
+});
+
+test('4) not responding: we wrote, >30d since our last, no reply since → not new', () => {
+  const r = cls({ hasOutbound: true, lastOutboundAt: daysAgo(40), lastInboundAt: daysAgo(45) }, null);
+  assert.strictEqual(r.isNew, false);
+  assert.ok(/не отвечает/i.test(r.reason));
+});
+
+test('4-neg) client replied AFTER our message → still new (not "not responding")', () => {
+  const r = cls({ hasOutbound: true, lastOutboundAt: daysAgo(40), lastInboundAt: daysAgo(35), offerSent: true }, null);
+  assert.strictEqual(r.isNew, true);
+});
+
+test('7) we NEVER replied → new, send offer, NOT hidden (even if old)', () => {
+  const r = cls({ hasOutbound: false, lastInboundAt: daysAgo(60) }, null);
+  assert.strictEqual(r.isNew, true);
+  assert.strictEqual(r.needs_calc_reply, true);
+  assert.ok(/ни разу не ответил/i.test(r.reason));
+  assert.ok(r.recommended_action);
+});
+
+test('5) offer already sent, client recently active → new, calc already sent', () => {
+  const r = cls({ hasOutbound: true, lastOutboundAt: daysAgo(5), lastInboundAt: daysAgo(3), offerSent: true }, null);
+  assert.strictEqual(r.isNew, true);
+  assert.strictEqual(r.needs_calc_reply, false);
+});
+
+test('default) we wrote but no offer, still in dialog → new, propose sending the offer', () => {
+  const r = cls({ hasOutbound: true, lastOutboundAt: daysAgo(5), lastInboundAt: daysAgo(6), offerSent: false }, null);
+  assert.strictEqual(r.isNew, true);
+  assert.strictEqual(r.needs_calc_reply, true);
+  assert.ok(/не отправляли стоимость/i.test(r.reason));
+});
+
+test('fresh, no WhatsApp at all → new, send offer', () => {
+  const r = cls({}, null);
+  assert.strictEqual(r.isNew, true);
+  assert.strictEqual(r.needs_calc_reply, true);
+});
+
+console.log('\n[buildTasks integration]');
 const PHONE = '996700111222';
-const PK = key(PHONE);
-const baseApp = { sheet_row: 5, applicant: 'ИП Тест', phone: PHONE, submitted_at: null };
+const PK = PHONE.slice(-9);
+const app = { sheet_row: 5, applicant: 'ИП Тест', phone: PHONE };
+const sig = (o) => new Map([[PK, Object.assign({ lastInboundAt: null, lastOutboundAt: null, hasOutbound: false, offerSent: false, inboundTexts: [] }, o)]]);
+const runNA = (signals, decl = {}) => svc.buildTasks({ waMessages: [], threadStates: {}, labEmails: [], newApplications: [app], declByPhone: decl, waSignalsByKey: signals, now: NOW }).tasks.filter(t => t.kind === 'new_application');
 
-// run({ app, wa, decl, signals }) → buildTasks result
-function run({ app = baseApp, wa = [], decl = {}, signals = null } = {}) {
-  return svc.buildTasks({
-    waMessages: wa, threadStates: {}, labEmails: [], newApplications: [app],
-    declByPhone: decl, waSignalsByKey: signals, now: NOW,
-  });
-}
-const newApps = (r) => r.tasks.filter(t => t.kind === 'new_application');
-const sig = (o) => new Map([[PK, Object.assign({ lastInboundAt: null, hasOutbound: false, sentCalc: false, inboundTexts: [] }, o)]]);
-
-console.log('\n[decision table — hide vs show]');
-
-test('fresh, no WhatsApp yet, not in Declaration → shown, needs_calc_reply', () => {
-  const r = run({});
-  assert.strictEqual(newApps(r).length, 1);
-  assert.strictEqual(newApps(r)[0].needs_calc_reply, true);
+test('not-responding application → hidden from list', () => {
+  assert.strictEqual(runNA(sig({ hasOutbound: true, lastOutboundAt: daysAgo(40), lastInboundAt: daysAgo(45) })).length, 0);
 });
 
-test('in «Декларация» → hidden', () => {
-  const r = run({ decl: { [PK]: { client: 'ИП Тест', status: 'Запустить', count: 1, paid: 0, debt: 0 } } });
-  assert.strictEqual(newApps(r).length, 0);
-  assert.strictEqual(r.hidden_new_applications, 1);
-});
-
-test('client reported payment in WhatsApp → hidden', () => {
-  const r = run({ wa: [{ direction: 'inbound', phone_key: PK, body: 'Оплатила, вот чек', received_at: daysAgoMs(1) }] });
-  assert.strictEqual(newApps(r).length, 0);
-});
-
-test('client refused in WhatsApp → hidden', () => {
-  const r = run({ wa: [{ direction: 'inbound', phone_key: PK, body: 'Спасибо, передумали', received_at: daysAgoMs(1) }] });
-  assert.strictEqual(newApps(r).length, 0);
-});
-
-test('semantic refusal key (LLM-provided) → hidden', () => {
-  const r = svc.buildTasks({ waMessages: [], threadStates: {}, labEmails: [], newApplications: [baseApp], declByPhone: {}, semanticRefusedKeys: new Set([PK]), now: NOW });
-  assert.strictEqual(newApps(r).length, 0);
-});
-
-test('abandoned: >50 days since client wrote AND we never replied → hidden', () => {
-  const r = run({ signals: sig({ lastInboundAt: daysAgoMs(60), hasOutbound: false }) });
-  assert.strictEqual(newApps(r).length, 0);
-  assert.strictEqual(r.hidden_new_applications, 1);
-});
-
-test('>50 days but WE replied (no calc) → shown, needs_calc_reply', () => {
-  const r = run({ signals: sig({ lastInboundAt: daysAgoMs(60), hasOutbound: true, sentCalc: false }) });
-  assert.strictEqual(newApps(r).length, 1);
-  assert.strictEqual(newApps(r)[0].needs_calc_reply, true);
-});
-
-test('sent calc + client silent >14 days → hidden', () => {
-  const r = run({ signals: sig({ lastInboundAt: daysAgoMs(20), hasOutbound: true, sentCalc: true }) });
-  assert.strictEqual(newApps(r).length, 0);
-});
-
-test('sent calc + client active recently (<14d) → shown, calc already sent', () => {
-  const r = run({ signals: sig({ lastInboundAt: daysAgoMs(5), hasOutbound: true, sentCalc: true }) });
-  assert.strictEqual(newApps(r).length, 1);
-  assert.strictEqual(newApps(r)[0].needs_calc_reply, false);
+test('never-replied application → shown with needs_calc_reply', () => {
+  const na = runNA(sig({ hasOutbound: false, lastInboundAt: daysAgo(60) }));
+  assert.strictEqual(na.length, 1);
+  assert.strictEqual(na[0].needs_calc_reply, true);
+  assert.ok(na[0].recommended_action);
 });
 
 console.log('\n[weSentCalc]');
 
-test('weSentCalc: detects a quote we sent', () => {
-  ['Итого 35 000 сом за 2 протокола', 'стоимость составит 18000 сом', 'по вашему товару 3 протокола, к оплате 45 000'].forEach(t =>
-    assert.ok(svc.weSentCalc(t), `should detect calc: ${t}`));
+test('weSentCalc: detects a quote / offer we sent', () => {
+  ['Итого 35 000 сом за 2 протокола', 'стоимость составит 18000 сом', 'выставил счёт на оплату', 'высылаю коммерческое предложение'].forEach(t =>
+    assert.ok(svc.weSentCalc(t), `should detect offer: ${t}`));
 });
 
-test('weSentCalc: plain chat is not a calc', () => {
+test('weSentCalc: plain chat is not an offer', () => {
   ['Здравствуйте!', 'пришлите состав ткани', 'спасибо'].forEach(t =>
-    assert.ok(!svc.weSentCalc(t), `should NOT detect calc: ${t}`));
+    assert.ok(!svc.weSentCalc(t), `should NOT detect: ${t}`));
 });
 
 console.log(`\n${fail ? 'FAIL' : 'OK'} — ${pass} passed, ${fail} failed`);

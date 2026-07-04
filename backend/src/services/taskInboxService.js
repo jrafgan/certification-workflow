@@ -26,18 +26,16 @@ function waName(m = {}) {
 
 const REASON_RU = { direct: 'личка', mention: 'упомянули вас', reply: 'ответ вам', keyword: 'спросили про сертификацию' };
 
-// Пороги «старой» заявки (см. таблицу решений в секции 3 buildTasks):
-//  • ABANDONED — прошло >N дней с последнего сообщения клиента И мы НИ РАЗУ не ответили в
-//    WhatsApp → заброшена, прячем. Env: NEW_APP_ABANDONED_DAYS (по умолч. 50).
-//  • SILENCE_AFTER_CALC — мы отправили клиенту просчёт (сумму/протоколы), а он молчит >N дней
-//    (ни да, ни нет) → потерян/думает, прячем. Env: NEW_APP_SILENCE_AFTER_CALC_DAYS (14).
-const NEW_APP_ABANDONED_DAYS = parseInt(process.env.NEW_APP_ABANDONED_DAYS, 10) || 50;
-const NEW_APP_SILENCE_AFTER_CALC_DAYS = parseInt(process.env.NEW_APP_SILENCE_AFTER_CALC_DAYS, 10) || 14;
+// «Клиент не отвечает» (правило №6): мы написали клиенту, и после НАШЕГО последнего сообщения
+// прошло >N дней без ответа. Env: NEW_APP_NORESPONSE_DAYS (по умолч. 30).
+const NEW_APP_NORESPONSE_DAYS = parseInt(process.env.NEW_APP_NORESPONSE_DAYS, 10) || 30;
 
-// weSentCalc(text) — ИСХОДЯЩЕЕ сообщение, где мы озвучили клиенту просчёт: упоминание
-// протокола/суммы/итога + число (≥3 цифр). Так агент понимает, отправляли мы уже сумму или нет.
-const CALC_SENT_RE = /(протокол|прото\b|\bпи\b|итог|общая\s+сумма|к\s+оплате|стоимост|обойд[её]тся|выйдет)/i;
-function weSentCalc(text = '') { const t = String(text || ''); return CALC_SENT_RE.test(t) && /\d[\d\s]{2,}/.test(t); }
+// weSentCalc(text) — ИСХОДЯЩЕЕ сообщение = коммерческое предложение клиенту: явное КП/счёт
+// (без числа) ИЛИ упоминание стоимости/протокола/итога + число (≥3 цифр). Так агент понимает,
+// отправляли мы клиенту предложение по стоимости или нет.
+const OFFER_TERM_RE = /коммерческ|выставил\w*\s+сч[её]т|сч[её]т\s+на\s+оплат|прайс/i;
+const COST_TERM_RE  = /(протокол|прото\b|\bпи\b|итог|общая\s+сумма|к\s+оплате|стоимост|обойд[её]тся|выйдет|цена|сумма)/i;
+function weSentCalc(text = '') { const t = String(text || ''); return OFFER_TERM_RE.test(t) || (COST_TERM_RE.test(t) && /\d[\d\s]{2,}/.test(t)); }
 
 // isRefused(text) — клиент по переписке ЯВНО отказался делать документ у нас. Консервативно:
 // прячем заявку только на однозначных формулировках отказа (ложное сокрытие = потерянный
@@ -49,6 +47,43 @@ function isRefused(text = '') { return REFUSED_RE.test(String(text || '')); }
 // к Декларации кол. G). Совпадает с leadIntent.payment_made. PURE.
 const CLIENT_PAID_RE = /оплатил|оплачен|перев[её]л|перечислил|чек(?![а-яё])|квитанц|оплату\s+(отправил|скинул|кинул)|тол[её]д[уи]м/i;
 function clientSaidPaid(text = '') { return CLIENT_PAID_RE.test(String(text || '')); }
+
+// classifyApplication(sig, decl, opts) → { isNew, reason, recommended_action?, needs_calc_reply? }.
+// PURE. Приоритетный порядок правил (ТЗ 2026-07-04). Возраст — ВСПОМОГАТЕЛЬНЫЙ (у формы нет даты
+// создания); решает фактическое состояние клиента. sig = { lastInboundAt, lastOutboundAt,
+// hasOutbound, offerSent, semanticRefused, inboundTexts[] }. decl = запись «Декларации» или null.
+function classifyApplication(sig = {}, decl = null, opts = {}) {
+  const now = opts.now || Date.now();
+  const noResponseDays = opts.noResponseDays || NEW_APP_NORESPONSE_DAYS;
+  const inboundTexts = sig.inboundTexts || [];
+  const lastInboundAt = sig.lastInboundAt || null;
+  const lastOutboundAt = sig.lastOutboundAt || null;
+  const hasOutbound = !!sig.hasOutbound;
+  const offerSent = !!sig.offerSent;
+  const refused = inboundTexts.some(isRefused) || !!sig.semanticRefused;
+  const saidPaid = inboundTexts.some(clientSaidPaid);
+
+  // 1) Клиент уже оформляется (Декларация / сертификаты / заказы)
+  if (decl) return { isNew: false, reason: 'Клиент уже оформляется (есть в Декларации)' };
+  // 2) Клиент оплатил (по переписке; оплата в Декларации поймана правилом 1)
+  if (saidPaid) return { isNew: false, reason: 'Клиент оплатил заказ' };
+  // 3) Клиент отказался
+  if (refused) return { isNew: false, reason: 'Клиент отказался' };
+  // 4) Клиент не отвечает: мы писали, прошло > N дней после НАШЕГО последнего, ответа не было
+  if (hasOutbound && lastOutboundAt && (now - lastOutboundAt) / 86400000 > noResponseDays
+      && (!lastInboundAt || lastInboundAt <= lastOutboundAt))
+    return { isNew: false, reason: `Клиент не отвечает более ${noResponseDays} дней` };
+  // 7) Мы НИ РАЗУ не ответили → НЕ скрывать, предложить отправить КП (наша недоработка)
+  if (!hasOutbound)
+    return { isNew: true, needs_calc_reply: true, reason: 'Клиенту ни разу не ответили',
+             recommended_action: 'Отправить клиенту коммерческое предложение (стоимость услуг)' };
+  // 5) КП уже отправлено, клиент ещё в диалоге → остаётся новой, ждём решения
+  if (offerSent)
+    return { isNew: true, needs_calc_reply: false, reason: 'КП отправлено — ждём решения клиента', recommended_action: null };
+  // Иначе: мы писали, но стоимость ещё не отправляли → предложить отправить
+  return { isNew: true, needs_calc_reply: true, reason: 'Клиенту ещё не отправляли стоимость услуг',
+           recommended_action: 'Предложить оператору отправить клиенту коммерческое предложение' };
+}
 
 // «Декларация» columns (0-based) — the LIVE sheet is the source of truth (the Mongo
 // Declaration replica is intentionally empty, which is why matching against it always said
@@ -205,9 +240,8 @@ function buildTasks(input = {}) {
     });
   }
 
-  // WhatsApp-сигналы по клиенту (обе стороны) для решения «новая заявка или старая».
-  // waSignalsByKey (готовится в tasks(), обе стороны): pk → { lastInboundAt, hasOutbound,
-  // sentCalc, inboundTexts[] }. Если не передано — строим по inbound из waMessages (fallback).
+  // WhatsApp-сигналы по клиенту (ОБЕ стороны). waSignalsByKey (из tasks()): pk → { lastInboundAt,
+  // lastOutboundAt, hasOutbound, offerSent, inboundTexts[] }. Если не передано — fallback по inbound.
   const signalsByKey = input.waSignalsByKey instanceof Map ? input.waSignalsByKey : null;
   const inboundTextByKey = new Map();
   if (!signalsByKey) {
@@ -218,29 +252,19 @@ function buildTasks(input = {}) {
     }
   }
   const sigFor = (pk) => (signalsByKey && signalsByKey.get(pk)) ||
-    { lastInboundAt: null, hasOutbound: false, sentCalc: false, inboundTexts: inboundTextByKey.get(pk) || [] };
+    { lastInboundAt: null, lastOutboundAt: null, hasOutbound: false, offerSent: false, inboundTexts: inboundTextByKey.get(pk) || [] };
 
-  // 3) NEW applications. Таблица решений (per operator 2026-07-04):
-  //   СКРЫТЬ (старая): оплатил ИЛИ в Декларации; отказ (regex/смысл); мы отправили просчёт, а
-  //     клиент молчит > SILENCE_AFTER_CALC дней; прошло > ABANDONED дней и мы НИ РАЗУ не ответили.
-  //   ПОКАЗАТЬ (новая): всё остальное. needs_calc_reply = мы ещё НЕ отправили просчёт → агент
-  //     предлагает оператору ответить клиенту в WhatsApp с общей суммой.
+  // 3) NEW applications — решение по приоритетным правилам (classifyApplication, ТЗ 2026-07-04).
+  //    isNew:false → скрыть; isNew:true → показать (needs_calc_reply = стоимость ещё не отправляли).
   let hiddenNewApps = 0;
   for (const a of newApplications) {
     const pk = a.phone ? matchKey(a.phone) : '';
     const decl = pk ? (declByPhone[pk] || null) : null;
     const s = sigFor(pk);
-    const inboundTexts = s.inboundTexts || [];
+    const verdict = classifyApplication({ ...s, semanticRefused: pk && semanticRefused.has(pk) }, decl, { now });
+    if (!verdict.isNew) { hiddenNewApps++; continue; }
+
     const idleDays = s.lastInboundAt ? Math.floor((now - s.lastInboundAt) / 86400000) : null;
-
-    const inDeclaration = !!decl;                                              // записан в Декларацию
-    const isPaid   = (decl && decl.paid > 0) || inboundTexts.some(clientSaidPaid);
-    const refused  = inboundTexts.some(isRefused) || (pk && semanticRefused.has(pk));
-    const silentAfterCalc = s.sentCalc && idleDays != null && idleDays > NEW_APP_SILENCE_AFTER_CALC_DAYS;
-    const abandoned = !s.hasOutbound && idleDays != null && idleDays > NEW_APP_ABANDONED_DAYS;
-    if (inDeclaration || isPaid || refused || silentAfterCalc || abandoned) { hiddenNewApps++; continue; }
-
-    const needsCalcReply = !s.sentCalc;                    // просчёт клиенту ещё не отправляли
     const subMs = a.submitted_at ? Date.parse(a.submitted_at) : null;
     const ageMs = subMs ? Math.max(0, now - subMs) : (s.lastInboundAt ? Math.max(0, now - s.lastInboundAt) : 0);
     const dateRu = subMs ? new Date(subMs).toLocaleDateString('ru-RU') : (idleDays != null ? `последнее сообщение ${idleDays} дн. назад` : 'дата неизвестна');
@@ -248,16 +272,18 @@ function buildTasks(input = {}) {
       kind: 'new_application',
       phone: a.phone || null, phone_key: pk || null,
       title: `Новая заявка · ${a.applicant || a.legal_entity || '—'}`,
-      subtitle: `${dateRu}${needsCalcReply ? ' · ⚠ просчёт не отправлен' : ' · ждём ответа клиента'}`,
-      last_message: needsCalcReply ? 'нет просчёта — предложить оператору отправить сумму клиенту' : 'просчёт отправлен — ждём решения клиента',
+      subtitle: `${dateRu} · ${verdict.reason}`,
+      last_message: verdict.recommended_action || verdict.reason,
       channel: 'application',
-      needs_calc_reply: needsCalcReply,
+      is_new: true,
+      new_reason: verdict.reason,
+      recommended_action: verdict.recommended_action || null,
+      needs_calc_reply: !!verdict.needs_calc_reply,
       idle_days: idleDays,
       age_ms: ageMs,
       last_at: a.submitted_at || (s.lastInboundAt ? new Date(s.lastInboundAt).toISOString() : null),
       submitted_at: a.submitted_at || null,
       age_days: subMs ? Math.floor((now - subMs) / 86400000) : idleDays,
-      stale: idleDays != null && idleDays >= NEW_APP_SILENCE_AFTER_CALC_DAYS,
       unread: 0,               // a new application is not an "unread message"
       sheet_row: a.sheet_row ?? null,
       priority: 1,
@@ -309,14 +335,15 @@ async function tasks(deps = {}) {
     for (const m of msgs) {
       const k = m.phone_key || matchKey(m.from_phone) || matchKey(m.to_phone); if (!k) continue;
       let s = waSignalsByKey.get(k);
-      if (!s) { s = { lastInboundAt: null, hasOutbound: false, sentCalc: false, inboundTexts: [] }; waSignalsByKey.set(k, s); }
+      if (!s) { s = { lastInboundAt: null, lastOutboundAt: null, hasOutbound: false, offerSent: false, inboundTexts: [] }; waSignalsByKey.set(k, s); }
       const at = new Date(m.received_at || m.sent_at || m.created_at || 0).getTime();
       if (m.direction === 'outbound') {
         s.hasOutbound = true;
-        if (!s.sentCalc && m.body && weSentCalc(m.body)) s.sentCalc = true;   // мы отправили просчёт
+        if (at && (!s.lastOutboundAt || at > s.lastOutboundAt)) s.lastOutboundAt = at;
+        if (!s.offerSent && m.body && weSentCalc(m.body)) s.offerSent = true;   // мы отправили клиенту КП/стоимость
       } else {
         if (at && (!s.lastInboundAt || at > s.lastInboundAt)) s.lastInboundAt = at;
-        if (m.body) s.inboundTexts.push(String(m.body));                      // desc → [0] самое свежее
+        if (m.body) s.inboundTexts.push(String(m.body));                        // desc → [0] самое свежее
       }
     }
   }
@@ -453,4 +480,4 @@ async function searchArchive({ q, phone, limit = 60 } = {}, deps = {}) {
   }));
 }
 
-module.exports = { buildTasks, threadKey, waName, declIndexFromRows, proposeReply, fmtSom, isRefused, clientSaidPaid, weSentCalc, tasks, thread, markThread, searchArchive };
+module.exports = { buildTasks, threadKey, waName, declIndexFromRows, proposeReply, fmtSom, isRefused, clientSaidPaid, weSentCalc, classifyApplication, tasks, thread, markThread, searchArchive };
