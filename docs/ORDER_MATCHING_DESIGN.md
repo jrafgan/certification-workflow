@@ -115,6 +115,35 @@ candidate) and **ranking signals** (order the candidates and feed the score).
 - **Subject:** separate the entity name from the trailing number so the number
   becomes its own signal rather than corrupting the name match.
 
+### 2.4 Phone source authority: Declaration > New Form
+
+When the same client has a phone in **both** the Declaration sheet and the New Form
+submission and they differ, the **Declaration phone is authoritative**. Declaration
+rows are manually verified by the operator before being recorded; New Form data is
+user-submitted and may carry typos, outdated numbers, assistant numbers, or temporary
+numbers.
+
+Matching rules:
+
+1. **Primary identity** — the Declaration phone is the phone identity used for the
+   WhatsApp leg and `matchKey` (§2.3).
+2. **Secondary evidence only** — the New Form phone may corroborate but never decides.
+3. **Never overwrite** — the Declaration phone is never auto-updated from New Form.
+4. **On mismatch** — emit a review note, verbatim:
+   `"Phone mismatch detected. Declaration phone retained as authoritative."`
+   Do **not** auto-correct, do **not** auto-update — operator decides.
+
+This is the phone-specific instance of the global source-of-truth priority
+(Operator > Declaration > Approved KB > Email > WhatsApp history > YouTube). Stored in
+the Approved Knowledge Base as `phone_source_priority`
+(`operatorMasterKbV2`, category *Declarations*).
+
+> Caveat (combat test 2026-06-22, `docs/runbooks/COMBAT_TEST_2026-06-22.md`):
+> "authoritative" here means *more trustworthy than New Form*, not *always correct* —
+> Declaration phones were still found wrong/truncated vs. the client's official
+> registration certificate (the certification mockup). The certificate/mockup remains a
+> separate, higher-fidelity recovery source and is **not** New Form data.
+
 ---
 
 ## 3. Confidence scoring model

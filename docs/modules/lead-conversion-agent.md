@@ -1,9 +1,9 @@
 # Module: Social / Lead Conversion Agent
 
-- **Status:** built (V1; platforms stubbed)
+- **Status:** built (V1; **Telegram live**, Instagram/Facebook stubbed pending Meta verification)
 - **Owner:** —
-- **Code:** `backend/src/services/leadConversionService.js`, `leadIntentService.js`, `leadReplyTemplates.js`; `models/Lead.js`, `LeadMessageDraft.js`; `integrations/platformAdapter.js`; `routes/leads.js`
-- **Last updated:** 2026-06-21
+- **Code:** `backend/src/services/leadConversionService.js`, `leadIntentService.js`, `leadReplyTemplates.js`; `models/Lead.js`, `LeadMessageDraft.js`; `integrations/platformAdapter.js`, `integrations/telegramClient.js`; `routes/leads.js`, `routes/telegram.js`
+- **Last updated:** 2026-06-30
 
 ---
 
@@ -51,9 +51,16 @@ lead_id, kind, auto_allowed, proposed_text, reason, impact, payload, dedupe_key(
 `leadIntentService` (pure ru/ky/en language + intent + service classifier — explicit Cyrillic
 boundaries, `\b` is ASCII-only). `leadConversionService` (pure state machine + 24/72h/7d follow-up
 + 30/60/90d recovery timing; DB ingest/advance/calc/payment/decide/release; reuses piCalculation +
-paymentRecognition). `platformAdapter` = StubAdapter (no live IG/FB/Telegram — gated follow-up).
+paymentRecognition). `platformAdapter` exposes `StubAdapter` + `RealAdapter`: `RealAdapter.deliver`
+dispatches by `draft.platform` — **Telegram is live** (`telegramClient` Bot API + webhook
+`POST /webhooks/telegram`, secret-token verified); Instagram/Facebook fall back to the stub until
+Meta App Review + business verification clears. Routes (`leads`, `telegram` webhook) inject
+`RealAdapter`. Setup: `docs/runbooks/CONNECT_TELEGRAM_BOT.md`. Agent still never auto-sends —
+operator approves + releases each draft.
 
 ## 8. Tests
-`npm run test:lead-intent` (22) + `test:lead-conversion` (29). Covers classification, state
-transitions, follow-up/recovery timing, auto-allowed-vs-gated boundary, KB-grounded templates.
-E2E dry-run verified ingest→draft→approve→release(stub)→gated calc→payment, nothing transmitted.
+`npm run test:lead-intent` (22) + `test:lead-conversion` (29) + `test:telegram` (13 — Bot API
+send, secret verify, Update parse, RealAdapter dispatch). Covers classification, state
+transitions, follow-up/recovery timing, auto-allowed-vs-gated boundary, KB-grounded templates,
+and live Telegram transport (mocked fetch). E2E dry-run verified
+ingest→draft→approve→release→gated calc→payment, nothing transmitted without approval.
