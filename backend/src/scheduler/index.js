@@ -22,6 +22,8 @@ const ORDER_SYNC_DRAFT_LIMIT = parseInt(process.env.ORDER_SYNC_DRAFT_LIMIT, 10) 
 // Cron for the Lead Recovery scan — «посчитали, клиент пропал» → предложить оператору
 // напоминание в WhatsApp. По умолчанию каждые 30 минут. Env: LEAD_RECOVERY_CRON.
 const LEAD_RECOVERY_CRON = process.env.LEAD_RECOVERY_CRON || '*/30 * * * *';
+// Cap on NEW recovery reminders per run — избегаем флуда очереди на первом бэклоге.
+const LEAD_RECOVERY_LIMIT = parseInt(process.env.LEAD_RECOVERY_LIMIT, 10) || 25;
 
 // In-process lock: prevents a new poll from starting while one is still running.
 // Sufficient for single-process deployment. If the process crashes mid-poll,
@@ -114,7 +116,7 @@ async function _runLeadRecoveryScan() {
       for (const g of agg) if (g._id && g.last) lastActivityByPhone[g._id] = new Date(g.last).getTime();
     } catch (e) { console.warn('[scheduler] lead-recovery last-activity agg failed:', e.message); }
 
-    const r = await leadRecovery.scan({ applicationsReader: newFormClient, lastActivityByPhone });
+    const r = await leadRecovery.scan({ applicationsReader: newFormClient, lastActivityByPhone, limit: LEAD_RECOVERY_LIMIT });
     if (r && (r.generated || r.skipped)) {
       console.log(`[scheduler] Lead recovery — proposals: ${r.generated || 0}, skipped: ${r.skipped || 0}`);
     }

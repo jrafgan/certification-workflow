@@ -210,8 +210,11 @@ async function scan(deps = {}) {
 
   const summary = { generated: 0, skipped: 0, recoveries: [], reasons: {} };
   const bump = (k) => { summary.reasons[k] = (summary.reasons[k] || 0) + 1; };
+  // Cap NEW proposals per run — не заваливать очередь напоминаний бэклогом с первого прогона.
+  const limit = Number.isFinite(deps.limit) ? deps.limit : null;
 
   for (const lead of candidates) {
+    if (limit != null && summary.generated >= limit) break;
     const assessment = assessLead(lead, now);
     if (!assessment) { summary.skipped++; bump('not_stalled'); continue; }
 
