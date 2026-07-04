@@ -39,6 +39,32 @@ async function sendText(to, body, deps = {}) {
   }
 }
 
+// ─── Outbound: send a pre-approved message TEMPLATE ─────────────────────────────
+// Business-initiated messages to a recipient OUTSIDE the 24h customer-service window
+// (e.g. a number that never wrote us — see firstContactService) MUST use a Meta-approved
+// template; free text is rejected. `components` is optional (for templates with variables).
+async function sendTemplate(to, name, lang = 'ru', components = null, deps = {}) {
+  if (!isConfigured()) return { ok: false, reason: 'not_configured', hint: 'Задайте WHATSAPP_CLOUD_TOKEN и WHATSAPP_PHONE_NUMBER_ID.' };
+  if (!to || !name) return { ok: false, reason: 'missing_to_or_template' };
+
+  const url = `https://graph.facebook.com/${graphVersion()}/${phoneNumberId()}/messages`;
+  const doFetch = deps.fetch || globalThis.fetch;
+  const template = { name: String(name), language: { code: String(lang || 'ru') } };
+  if (Array.isArray(components) && components.length) template.components = components;
+  try {
+    const res = await doFetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: String(to).replace(/[^\d]/g, ''), type: 'template', template }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: 'api_error', status: res.status, detail: json };
+    return { ok: true, message_id: json.messages && json.messages[0] && json.messages[0].id, to };
+  } catch (err) {
+    return { ok: false, reason: 'request_failed', detail: err.message };
+  }
+}
+
 // ─── Inbound: webhook verification (GET) ────────────────────────────────────────
 // Meta calls GET ?hub.mode=subscribe&hub.verify_token=...&hub.challenge=... — echo the
 // challenge when the verify token matches.
@@ -108,4 +134,4 @@ function toIngestRaw(parsed = {}) {
   };
 }
 
-module.exports = { isConfigured, graphVersion, sendText, verifyWebhook, verifySignature, parseIncoming, toIngestRaw };
+module.exports = { isConfigured, graphVersion, sendText, sendTemplate, verifyWebhook, verifySignature, parseIncoming, toIngestRaw };

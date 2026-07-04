@@ -35,7 +35,22 @@ async function transcribe(input = {}, deps = {}) {
   const form = new FormData();
   form.append('file', new Blob([buffer], { type: input.mimeType || 'audio/ogg' }), input.filename || 'voice.ogg');
   form.append('model', model());
-  form.append('language', input.language || process.env.OPENAI_TRANSCRIBE_LANG || 'ru');
+  // Language hint: 'auto' or empty → OMIT it so the model auto-detects. This is the
+  // right default for mixed Russian/Kyrgyz speech (forcing 'ru' garbles Kyrgyz, and
+  // gpt-4o-transcribe rejects an explicit 'ky' code). Set OPENAI_TRANSCRIBE_LANG to a
+  // concrete code only when every voice note is reliably that one language.
+  const lang = input.language || process.env.OPENAI_TRANSCRIBE_LANG || '';
+  if (lang && !/^auto$/i.test(lang)) form.append('language', lang);
+  // Optional free-text prompt to bias decoding (e.g. domain terms / language names).
+  const prompt = input.prompt || process.env.OPENAI_TRANSCRIBE_PROMPT || '';
+  if (prompt) form.append('prompt', prompt);
+  // temperature=0 by default → most faithful / least "creative" decoding, and
+  // reproducible run-to-run (важно для трудной кыргызско-русской речи). Override via
+  // input.temperature or OPENAI_TRANSCRIBE_TEMPERATURE.
+  const temp = input.temperature != null ? input.temperature
+    : (process.env.OPENAI_TRANSCRIBE_TEMPERATURE != null && process.env.OPENAI_TRANSCRIBE_TEMPERATURE !== ''
+        ? process.env.OPENAI_TRANSCRIBE_TEMPERATURE : 0);
+  form.append('temperature', String(temp));
 
   try {
     const res = await doFetch(ENDPOINT, { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form });

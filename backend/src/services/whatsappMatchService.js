@@ -16,6 +16,38 @@
 
 const { matchKey } = require('../utils/phoneUtils');
 
+// «Декларация» columns (source of truth is the SHEET; the Mongo Declaration replica is empty,
+// so matching must read the live sheet — see memory whatsapp-match-empty-replica-bug).
+const DECL_CLIENT_COL = 3;   // D — Клиент
+const DECL_PHONE_COL  = 9;   // J — Номер тел
+const DECL_STATUS_COL = 13;  // N — Статус
+const DECL_TTL_MS = 60_000;  // cache the sheet read to avoid one Google call per inbound webhook
+let _declCache = { at: 0, rows: null };
+
+// mapDeclRows — raw sheet rows → matcher candidate shape. The sheet row IS the order
+// (sheet_row_id); there is no Mongo Order to point at, so order_id stays null.
+function mapDeclRows(raw = []) {
+  return (raw || []).map((r, i) => ({
+    order_id: null,
+    declaration_id: null,
+    sheet_row_id: String(i + 2),                       // data rows start at sheet row 2
+    client_name: String(r[DECL_CLIENT_COL] || '').trim() || null,
+    document_type: null,
+    status: String(r[DECL_STATUS_COL] || '').trim() || null,
+    phone: r[DECL_PHONE_COL] != null ? String(r[DECL_PHONE_COL]) : '',
+  }));
+}
+
+// liveDeclarations — cached read of the LIVE «Декларация» sheet. Injectable via
+// deps.readDeclaration (tests / callers bypass the cache).
+async function liveDeclarations(deps = {}) {
+  if (deps.readDeclaration) return mapDeclRows(await deps.readDeclaration());
+  if (_declCache.rows && Date.now() - _declCache.at < DECL_TTL_MS) return _declCache.rows;
+  const rows = mapDeclRows(await require('./workQueueService').defaultReadDeclaration());
+  _declCache = { at: Date.now(), rows };
+  return rows;
+}
+
 // rankByPhone(phone, declarations) → { match_status, match_confidence, candidates }
 // `declarations` is an array of plain Declaration-like objects with at least
 // { _id, order_id, sheet_row_id, client_name, phone, status }.
@@ -63,25 +95,39 @@ async function matchMessage(messageId, deps = {}) {
   const msg = await WhatsAppMessage.findById(messageId);
   if (!msg) throw require('../utils/errorUtils').notFoundError('WhatsApp message not found');
 
-  const key = msg.phone_key || matchKey(msg.from_phone);
-  // Narrow the scan when a phone_key index exists on the replica; otherwise the
-  // caller can pass a prefiltered set. Here we query by stored phone_key when set,
-  // else fall back to scanning (replica is bounded).
-  const query = key ? { phone_key: key } : { _id: null };
-  let decls = await Declaration.find(query).lean();
-  if (!decls.length && key) {
-    // Replica may not have phone_key populated yet (pre-sync) — scan + filter.
-    decls = (await Declaration.find({}).lean()).filter(d => matchKey(d.phone) === key);
+  // Candidate source = the LIVE «Декларация» sheet (source of truth). Fall back to the Mongo
+  // replica only if the sheet is unreachable (the replica is normally empty).
+  let decls;
+  try {
+    decls = await liveDeclarations(deps);
+  } catch (_) {
+    const key = msg.phone_key || matchKey(msg.from_phone);
+    decls = key ? (await Declaration.find({}).lean()) : [];
   }
 
-  const result = rankByPhone(msg.from_phone, decls);
-  msg.match_status     = result.match_status;
-  msg.match_confidence = result.match_confidence;
-  msg.candidates       = result.candidates;
-  msg.matched_order_id = result.match_status === 'matched' ? (result.candidates[0].order_id || null) : null;
+  const result = rankByPhone(msg.from_phone || msg.phone_key, decls);
+  msg.match_status      = result.match_status;
+  msg.match_confidence  = result.match_confidence;
+  msg.candidates        = result.candidates;
+  // No Mongo Order exists — the matched entity is the sheet row (matched_sheet_row).
+  msg.matched_order_id  = result.match_status === 'matched' ? (result.candidates[0].order_id || null) : null;
+  msg.matched_sheet_row = result.match_status === 'matched' ? (result.candidates[0].sheet_row_id || null) : null;
   await msg.save();
 
   return { message: msg, ...result };
+}
+
+// rematchAll — re-run matching on stored inbound messages (e.g. after the source was fixed).
+// Read-only toward the world; only updates the whatsapp_messages working records.
+async function rematchAll(deps = {}) {
+  const { WhatsAppMessage } = deps.WhatsAppMessage ? deps : require('../models/WhatsAppMessage');
+  const ids = await WhatsAppMessage.find({ direction: 'inbound' }).select('_id').lean();
+  const out = { total: ids.length, matched: 0, needs_review: 0, unmatched: 0 };
+  for (const { _id } of ids) {
+    const r = await matchMessage(_id, deps);
+    out[r.match_status] = (out[r.match_status] || 0) + 1;
+  }
+  return out;
 }
 
 // ─── lookupByPhone — Sprint 2 read-only Declaration lookup ────────────────────
@@ -120,16 +166,17 @@ function lookupByPhone(phone, declarations = []) {
 // DB-backed read-only wrapper: reads the Declaration replica and returns the
 // lookup result. No writes, no status changes, no messages.
 async function lookupOrdersByPhone(phone, deps = {}) {
-  const { Declaration } = deps.Declaration ? deps : require('../models/Declaration');
   const key = matchKey(phone);
   if (!key) return lookupByPhone(phone, []);
-
-  let decls = await Declaration.find({ phone_key: key }).lean();
-  if (!decls.length) {
-    // Replica may not have phone_key populated yet — scan + filter by canonical key.
-    decls = (await Declaration.find({}).lean()).filter(d => matchKey(d.phone) === key);
+  // LIVE sheet is the source of truth; fall back to the Mongo replica if unreachable.
+  let decls;
+  try {
+    decls = await liveDeclarations(deps);
+  } catch (_) {
+    const { Declaration } = deps.Declaration ? deps : require('../models/Declaration');
+    decls = await Declaration.find({}).lean();
   }
   return lookupByPhone(phone, decls);
 }
 
-module.exports = { rankByPhone, matchMessage, lookupByPhone, lookupOrdersByPhone };
+module.exports = { rankByPhone, matchMessage, rematchAll, lookupByPhone, lookupOrdersByPhone, liveDeclarations, mapDeclRows };

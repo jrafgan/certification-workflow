@@ -14,11 +14,26 @@
 
 const { matchKey } = require('../utils/phoneUtils');
 
-const DECL_CLIENT_COL = 3;   // D — Клиент
-const DECL_PHONE_COL  = 9;   // J — Номер тел (primary ID)
-const DECL_STATUS_COL = 13;  // N — Статус
+const DECL_CLIENT_COL  = 3;   // D — Клиент
+const DECL_PAYMENT_COL = 6;   // G — Сумма (paid amount; parentheses = remaining debt)
+const DECL_PHONE_COL   = 9;   // J — Номер тел (primary ID)
+const DECL_STATUS_COL  = 13;  // N — Статус
 
 function norm(s) { return String(s || '').trim().toLowerCase(); }
+
+// parsePayment — read «Сумма» (col G). The paid amount is the first number; a number in
+// parentheses is the REMAINING debt when partially paid ("15000 (5000)" → paid 15000, debt
+// 5000). PURE. Returns { paid, debt, raw }.
+function parsePayment(cell) {
+  const s = String(cell == null ? '' : cell).replace(/ /g, ' ').trim();
+  if (!s) return { paid: 0, debt: 0, raw: null };
+  const toNum = (x) => parseInt(String(x || '').replace(/\D/g, ''), 10) || 0;
+  const nums = s.match(/\d[\d\s]*/g) || [];
+  const paid = nums.length ? toNum(nums[0]) : 0;
+  const paren = s.match(/\(([^)]*)\)/);
+  const debt = paren ? toNum((paren[1].match(/\d[\d\s]*/) || [])[0]) : 0;
+  return { paid, debt, raw: s };
+}
 
 // stageFor(status) — coarse stage from the free-text «Декларация» status (N). ADVISORY.
 function stageFor(status) {
@@ -64,7 +79,7 @@ async function buildByPhone(phone, deps = {}) {
   // «Декларация» orders for this phone (J), verbatim status (N) + client (D).
   const declRows = (await safe(readDecl(), []))
     .filter(r => matchKey(r[DECL_PHONE_COL]) === phone_key)
-    .map(r => ({ client: String(r[DECL_CLIENT_COL] || '').trim() || null, status: String(r[DECL_STATUS_COL] || '').trim() || null }));
+    .map(r => ({ client: String(r[DECL_CLIENT_COL] || '').trim() || null, status: String(r[DECL_STATUS_COL] || '').trim() || null, payment: parsePayment(r[DECL_PAYMENT_COL]) }));
 
   // «Новая форма» application for this phone.
   let application = null;
@@ -86,12 +101,15 @@ async function buildByPhone(phone, deps = {}) {
     || (application ? [application.legal_entity, application.name].filter(Boolean).join(' ').trim() : null)
     || null;
 
-  // Orders with advisory stage + next actor.
+  // Orders with advisory stage + next actor + payment (col G).
   const orders = declRows.map(d => ({
     client: d.client, status: d.status,
+    paid: d.payment.paid, debt: d.payment.debt,
     stage: stageFor(d.status), next_actor: nextActorFor(d.status), next_actor_ru: ACTOR_RU[nextActorFor(d.status)] || null,
   }));
   const active = orders.filter(o => o.stage !== 'done');
+  const paid_total = orders.reduce((n, o) => n + (o.paid || 0), 0);
+  const debt_total = orders.reduce((n, o) => n + (o.debt || 0), 0);
 
   return {
     found: true,
@@ -103,6 +121,7 @@ async function buildByPhone(phone, deps = {}) {
     application,
     orders,
     active_count: active.length,
+    paid_total, debt_total, is_paid: paid_total > 0,      // «Сумма» (col G): оплата и остаток долга
     alive: active.length > 0 || declRows.length === 0,   // «живёт», пока не все «Завершен»
     // From WhatsApp — pending the WhatsApp channel (receive-only / not yet ingesting).
     whatsapp_pending: {
@@ -114,4 +133,4 @@ async function buildByPhone(phone, deps = {}) {
   };
 }
 
-module.exports = { stageFor, nextActorFor, ACTOR_RU, buildByPhone, DECL_PHONE_COL, DECL_STATUS_COL, DECL_CLIENT_COL };
+module.exports = { stageFor, nextActorFor, ACTOR_RU, parsePayment, buildByPhone, DECL_PHONE_COL, DECL_STATUS_COL, DECL_CLIENT_COL, DECL_PAYMENT_COL };

@@ -2,20 +2,18 @@
 
 // services/labEmailService.js — lab email PREPARATION (Функция №4). DRAFT ONLY.
 //
-// Builds the laboratory email for an order: recipient by document type (ДС→Дастан,
-// СС→Бермет — the only two recipients), subject = client ИП/ОсОО name with a sequential
+// Builds the laboratory email for an order: recipient by document type — СС→Бермет, and ДС
+// routed by швейный-цех documents (Дастану БОЛЬШЕ НЕ ПИШЕМ; see config/labRecipients.js).
+// Subject = client ИП/ОсОО name with a sequential
 // number when that name already appears in «Декларация», a duplicate flag, a KB-grounded
 // body, and the attachment list. It NEVER sends — auto_send:false, operator approves and
 // sends manually. Uses only operator-confirmed «Декларация» column D for the prior-name count.
 
 const generation = require('./mockupGenerationService');
 const workQueue  = require('./workQueueService');
-const { LAB_RECIPIENTS, recipientHeader } = require('../config/labRecipients');
+const { LAB_RECIPIENTS, recipientHeader, isConfigured, routeLab } = require('../config/labRecipients');
 
 const DECL_CLIENT_COL = 3;  // «Декларация» D — Клиент (operator-confirmed link / subject name)
-
-// ─── Pure helpers ─────────────────────────────────────────────────────────────
-function routeLab(docType) { return LAB_RECIPIENTS[docType] || null; }
 
 // normalizeName — case/space-insensitive key for matching the same ИП/ОсОО name.
 function normalizeName(name) {
@@ -29,8 +27,11 @@ function subjectFor(name, priorCount = 0) {
 }
 
 // buildLabEmail — assemble the gated draft. priorCount = prior occurrences of the name.
-function buildLabEmail({ clientName, docType, piCount = 1, additionalPi = 0, mockupFileName, attachmentFileName, priorCount = 0 } = {}) {
-  const route = routeLab(docType);
+// hasWorkshopDocs: true/false/undefined — for ДС it picks the issuing body (есть/нет
+// документов на швейный цех). undefined → recipient unresolved until the agent asks the client.
+function buildLabEmail({ clientName, docType, piCount = 1, additionalPi = 0, mockupFileName, attachmentFileName, priorCount = 0, hasWorkshopDocs } = {}) {
+  const opts = { hasWorkshopDocs };
+  const route = routeLab(docType, opts);
   if (!route) return { ok: false, reason: 'unknown_doc_type', docType };
   if (!clientName || !String(clientName).trim()) return { ok: false, reason: 'no_client_name' };
 
@@ -51,12 +52,29 @@ function buildLabEmail({ clientName, docType, piCount = 1, additionalPi = 0, moc
     ? `Имя «${String(clientName).trim()}» уже встречается ${priorCount} раз(а) в «Декларации». Тема получила номер ${priorCount + 1}. Проверьте получателя/лабораторию — если получатель тот же, возможен дубль/ошибка (уточните у оператора).`
     : null;
 
+  // Recipient may be intentionally unresolved. Build the draft anyway for operator review,
+  // but flag it as NOT sendable with a precise reason (ask цех-docs / fill the missing email).
+  const recipient_configured = isConfigured(docType, opts);
+  let recipient_warning = null;
+  if (!recipient_configured) {
+    if (docType === 'ДС' && hasWorkshopDocs === undefined) {
+      recipient_warning = 'Сначала уточните у клиента: есть ли документы на швейный цех? От этого зависят орган выдачи, цена и срок декларации. Затем укажите вариант — отправлять пока нельзя.';
+    } else if (docType === 'ДС' && hasWorkshopDocs === true) {
+      recipient_warning = 'Почта органа для ДС «есть документы на цех» ещё не задана (LAB_DS_WITH_WORKSHOP_EMAIL). Отправлять пока нельзя.';
+    } else {
+      recipient_warning = `Почта получателя для ${docType} не задана. Впишите адрес перед отправкой — пока отправлять нельзя.`;
+    }
+  }
+
   return {
     ok: true,
-    lab: route.lab,
-    recipient_name: route.recipient_name,
-    to_email: route.email,
-    to: recipientHeader(docType),                             // «Имя <email>»
+    lab: route.lab || null,
+    recipient_name: route.recipient_name || null,
+    to_email: route.email || null,
+    to: recipientHeader(docType, opts),                       // «Имя <email>» либо null
+    declaration_variant: docType === 'ДС' ? route.variant : null,
+    recipient_configured,
+    recipient_warning,
     subject,
     body,
     attachments,

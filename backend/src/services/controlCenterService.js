@@ -22,6 +22,8 @@ const leadRecovery     = require('./leadRecoveryService');
 const knowledgeBase    = require('./knowledgeBaseService');
 const pi               = require('./piCalculationService');
 const authService      = require('./authService');
+const operatorAssistant = require('./operatorAssistantService');
+const newApplicationProposal = require('./newApplicationProposalService');
 const audit            = require('./auditService');
 const errorUtils       = require('../utils/errorUtils');
 
@@ -81,7 +83,7 @@ function leadDraftCard(d) {
     editable: true, actions: ['approve', 'reject', 'edit'], created_at: d.created_at, state: d.state };
 }
 function emailDraftCard(d) {
-  return { type: 'email_draft', id: String(d._id), title: `Письмо лаборатории · ${EMAIL_KIND_RU[d.draft_type] || d.draft_type}`, subtitle: `${d.to_email} · ${d.client_name || ''}`,
+  return { type: 'email_draft', id: String(d._id), title: `Письмо лаборатории · ${EMAIL_KIND_RU[d.draft_type] || d.draft_type}`, subtitle: `${d.to_email || 'получатель не задан'} · ${d.client_name || ''}`,
     body: `${d.subject}\n\n${d.body}`, reason: d.reason, evidence: evidenceList(d.evidence), confidence: d.confidence_band,
     editable: true, actions: ['approve', 'reject', 'edit'], created_at: d.created_at, state: d.state, order_id: d.order_id ? String(d.order_id) : null };
 }
@@ -117,30 +119,49 @@ const WA_MATCH_RU = { received: 'не разобрано', matched: 'привя�
 function whatsappMessageCard(m) {
   const who = m.from_phone || m.lid || 'неизвестный';
   const hasMedia = (m.attachments || []).length > 0;
+  const cands = m.candidates || [];
+  // Show the matched order (client + status from the live-sheet match), not just "без заказа".
+  let subtitle = WA_MATCH_RU[m.match_status] || m.match_status || '';
+  if (m.match_status === 'matched' && cands[0]) subtitle = `${cands[0].client_name ? '«' + cands[0].client_name + '»' : 'заказ'}${cands[0].status ? ' · ' + cands[0].status : ''}`;
+  else if (m.match_status === 'needs_review' && cands.length) subtitle = `нужна проверка · ${cands.length} заказ(ов)`;
   return { type: 'whatsapp_message', id: String(m._id), title: `💬 WhatsApp · ${who}`,
-    subtitle: WA_MATCH_RU[m.match_status] || m.match_status || '', body: m.body || (hasMedia ? '[вложение]' : ''),
+    subtitle, body: m.body || (hasMedia ? '[вложение]' : ''),
     evidence: [], confidence: null, editable: false, actions: [],
     created_at: m.received_at || m.created_at, order_id: m.matched_order_id ? String(m.matched_order_id) : null };
+}
+// Новая заявка (Новая форма) → предложение с расчётом ПИ/суммы + черновик ответа клиенту.
+function newApplicationCard(d) {
+  const subtitle = d.total_estimate != null
+    ? `${d.doc_type} · ПИ ${d.protocol_count} · ~${d.total_estimate} ${d.currency || 'сом'}${d.is_minimum ? ' (от)' : ''}${d.laboratory ? ' · ' + d.laboratory : ''}`
+    : (d.doc_type ? `${d.doc_type} · нужен расчёт` : 'тип документа не определён — нужен оператор');
+  return { type: 'new_application', id: String(d._id),
+    title: `📝 Новая заявка · ${d.applicant_name || d.applicant_phone || 'без имени'}`,
+    subtitle, body: d.draft_reply,
+    reason: (d.needs && d.needs.length) ? `Требует уточнения: ${d.needs.join(', ')}` : 'Готов расчёт и черновик ответа клиенту',
+    evidence: (d.evidence || []).concat((d.warnings || []).map(w => `⚠ ${w.message}`)),
+    confidence: d.doc_type ? null : 'LOW', editable: true,
+    actions: ['approve', 'reject'], created_at: d.created_at, state: d.status };
 }
 
 // ─── Agent Inbox: unified recent stream across all engines ───────────────────
 async function inbox({ limit = 60 } = {}) {
   if (!connected()) return { db_connected: false, items: [] };
-  const { LeadMessageDraft, EmailDraft, AuditPackage, ExtractionReview, DraftPackage, LeadRecovery, WhatsAppMessage } = M();
-  const [ld, ed, au, er, dp, lr, wa] = await Promise.all([
+  const { LeadMessageDraft, EmailDraft, AuditPackage, ExtractionReview, DraftPackage, LeadRecovery, WhatsAppMessage, NewApplicationProposal } = M();
+  const [ld, ed, au, er, dp, lr, wa, np] = await Promise.all([
     LeadMessageDraft.find({ state: { $in: ['pending_approval', 'changes_requested'] } }).sort({ created_at: -1 }).limit(limit).lean(),
     EmailDraft.find({ state: { $in: ['pending_approval', 'changes_requested'] } }).sort({ created_at: -1 }).limit(limit).lean(),
     AuditPackage.find({ state: 'pending' }).sort({ created_at: -1 }).limit(limit).lean(),
     ExtractionReview.find({ status: 'pending' }).sort({ created_at: -1 }).limit(limit).lean(),
     DraftPackage.find({ status: 'pending' }).sort({ created_at: -1 }).limit(limit).lean(),
     LeadRecovery.find({ state: { $in: ['pending', 'changes_requested'] } }).sort({ created_at: -1 }).limit(limit).lean(),
-    // Incoming WhatsApp — informational (no approve/reject); newest first.
-    WhatsAppMessage.find({ direction: 'inbound' }).sort({ received_at: -1 }).limit(limit).lean(),
+    // Incoming WhatsApp — direct + group-addressed only (archived group chatter excluded here).
+    WhatsAppMessage.find({ direction: 'inbound', $or: [{ is_group: { $ne: true } }, { addressed_me: true }] }).sort({ received_at: -1 }).limit(limit).lean(),
+    NewApplicationProposal.find({ status: 'pending' }).sort({ created_at: -1 }).limit(limit).lean(),
   ]);
   const items = [
     ...ld.map(leadDraftCard), ...ed.map(emailDraftCard), ...au.map(auditCard),
     ...er.map(reviewCard), ...dp.map(packageCard), ...lr.map(recoveryCard),
-    ...wa.map(whatsappMessageCard),
+    ...wa.map(whatsappMessageCard), ...np.map(newApplicationCard),
   ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, limit);
   return { db_connected: true, items };
 }
@@ -224,6 +245,7 @@ async function decide({ type, id, action, text, note, actor = {} } = {}) {
       case 'audit':             { const d = await workflowAudit.decide(id, action, { decidedBy }); result = { ok: true, id, type, state: d.state }; break; }
       case 'extraction_review': { const d = await extractionReview.decide(id, action, { decidedBy }); result = { ok: true, id, type, state: d.status }; break; }
       case 'lead_recovery':     { const d = await leadRecovery.decide(id, action, { decidedBy }); result = { ok: true, id, type, state: d.state }; break; }
+      case 'new_application':   { const d = await newApplicationProposal.decide(id, action === 'approve' ? 'approve' : 'dismiss', { decidedBy }); result = { ok: true, id, type, state: d && d.status }; break; }
       default: throw errorUtils.validationError(`Неизвестный тип «${type}»`);
     }
   }
@@ -239,11 +261,11 @@ async function decide({ type, id, action, text, note, actor = {} } = {}) {
 async function chat({ type, id, question = '' } = {}) {
   if (!connected()) return { answer: 'Database is offline — no stored evidence available.', evidence: [] };
   const q = String(question).toLowerCase();
-  const item = await loadItem(type, id);
-  if (!item) return { answer: 'Item not found.', evidence: [] };
+  // Задача теперь НЕОБЯЗАТЕЛЬНА — можно задать общий вопрос по работе.
+  const item = (type && id) ? await loadItem(type, id) : null;
 
-  // recalculate — only meaningful for a lead calculation carrying its inputs.
-  if (/recalc|пересчит|recalculate/.test(q)) {
+  // Быстрые детерминированные ответы по конкретной задаче (без вызова LLM).
+  if (item && /recalc|пересчит|recalculate/.test(q)) {
     const payload = item.payload || (item.proposed_data && item.proposed_data.pi) || null;
     if (payload && payload.doc_type) {
       const calc = pi.computePi({ doc_type: payload.doc_type, pi_count: payload.pi_count, compositions: payload.compositions, base_price: payload.base_price });
@@ -252,18 +274,35 @@ async function chat({ type, id, question = '' } = {}) {
     return { answer: 'No calculation inputs stored on this item to recalculate.', evidence: [] };
   }
 
-  const reason = item.reason || item.reasoning || '(no stored reason)';
-  const evidence = evidenceList(item.evidence).concat((item.findings || []).map(f => `${f.type}: ${f.detail}`));
+  const reason = item ? (item.reason || item.reasoning || '(no stored reason)') : null;
+  const evidence = item ? evidenceList(item.evidence).concat((item.findings || []).map(f => `${f.type}: ${f.detail}`)) : [];
 
-  if (/evidence|докаж|основани|покажи/.test(q)) {
+  if (item && /evidence|докаж|основани|покажи/.test(q)) {
     return { answer: evidence.length ? `Stored evidence (${evidence.length}):` : 'No structured evidence stored for this item.', evidence };
   }
-  // default: why / explain proposal
+
+  // Свободный вопрос → живой ИИ-помощник оператора (grounded в БЗ + контексте задачи).
+  if (operatorAssistant.isConfigured()) {
+    const contextItem = item ? { title: itemTitle(type, item), reason, evidence } : null;
+    const r = await operatorAssistant.ask({ question, contextItem });
+    if (r.ok) return { answer: r.answer, evidence, llm: true };
+    // ошибка LLM → откат на canned ниже
+  }
+
+  // Fallback без LLM: если есть задача — объясняем сохранённое обоснование; иначе подсказка.
+  if (!item) {
+    return { answer: 'Задайте вопрос по конкретной задаче (выберите её слева) — или включите ИИ-помощника, задав ANTHROPIC_API_KEY в .env.', evidence: [] };
+  }
   return { answer: `Why: ${reason}`, evidence, confidence: item.confidence_band || item.confidence || null };
 }
 
+// Краткий заголовок задачи для контекста ассистента (мягко, без обязательности схемы).
+function itemTitle(type, item) {
+  return item.client_name || item.subject || item.reason || `${type} ${item._id || ''}`.trim();
+}
+
 async function loadItem(type, id) {
-  const { LeadMessageDraft, EmailDraft, AuditPackage, ExtractionReview, DraftPackage, LeadRecovery } = M();
+  const { LeadMessageDraft, EmailDraft, AuditPackage, ExtractionReview, DraftPackage, LeadRecovery, NewApplicationProposal } = M();
   switch (type) {
     case 'lead_message':      return LeadMessageDraft.findById(id).lean();
     case 'email_draft':       return EmailDraft.findById(id).lean();
@@ -271,6 +310,7 @@ async function loadItem(type, id) {
     case 'extraction_review': return ExtractionReview.findById(id).lean();
     case 'draft_package':     return DraftPackage.findById(id).lean();
     case 'lead_recovery':     return LeadRecovery.findById(id).lean();
+    case 'new_application':   return NewApplicationProposal.findById(id).lean();
     default: return null;
   }
 }
@@ -306,9 +346,16 @@ async function sources() {
   const out = [];
   const push = (key, label, status, detail, count) => out.push({ key, label, status, detail, count });
 
-  // Declaration (Mongo replica of the sheet)
-  if (dbOn) { const n = await M().Declaration.countDocuments(); push('declaration', 'Декларации (таблица)', n > 0 ? 'ok' : 'empty', n > 0 ? `Загружено строк: ${n}` : 'Декларации не загружены в систему', n); }
-  else push('declaration', 'Декларации (таблица)', 'unavailable', 'Нет подключения к базе данных');
+  // Declaration — LIVE read of the «Декларация» Google Sheet (the sheet is the source of
+  // truth; the Mongo replica is intentionally unused/empty, so counting it falsely showed
+  // "не загружены"). Independent of Mongo; graceful fallback if the sheet is unreachable.
+  try {
+    const rows = await require('./workQueueService').defaultReadDeclaration();
+    const n = Array.isArray(rows) ? rows.length : 0;
+    push('declaration', 'Декларации (таблица)', n > 0 ? 'ok' : 'empty', n > 0 ? `Строк в таблице: ${n}` : 'Таблица «Декларация» пуста', n);
+  } catch (err) {
+    push('declaration', 'Декларации (таблица)', 'unavailable', `Не удалось прочитать таблицу «Декларация»: ${err.message}`);
+  }
 
   // WhatsApp (ingested messages)
   if (dbOn) { const n = await M().WhatsAppMessage.countDocuments(); push('whatsapp', 'WhatsApp', n > 0 ? 'ok' : 'empty', n > 0 ? `Сообщений в системе: ${n}` : 'Сообщения WhatsApp ещё не загружены в систему', n); }
@@ -506,9 +553,39 @@ async function attentionCenter() {
   return { db_connected: true, ...r };
 }
 
+// ─── Task Inbox (WhatsApp-style To-Do) — read-only, see taskInboxService ─────────
+async function taskInbox() {
+  if (!connected()) return { db_connected: false, tasks: [], total: 0 };
+  const r = await require('./taskInboxService').tasks();
+  return { db_connected: true, ...r };
+}
+async function taskThread(phone) {
+  if (!connected()) return { db_connected: false };
+  const r = await require('./taskInboxService').thread(phone);
+  return { db_connected: true, ...r };
+}
+// Full archive search (all WhatsApp, both directions) — for analysing old conversations.
+async function waSearch({ q, phone, limit } = {}) {
+  if (!connected()) return { db_connected: false, messages: [] };
+  const messages = await require('./taskInboxService').searchArchive({ q, phone, limit });
+  return { db_connected: true, messages, count: messages.length };
+}
+// The ONLY mutation here — operator UI state (read/done/snooze), AUDITED.
+async function markThread({ phone, action, until, actor = {} } = {}) {
+  if (!connected()) throw errorUtils.validationError('Нет подключения к базе данных');
+  if (!phone || !action) throw errorUtils.validationError('phone, action обязательны');
+  const r = await require('./taskInboxService').markThread(phone, action, { until, updated_by: actor.username || 'operator' });
+  if (r.ok) await audit.record({ user: actor.username, role: actor.role, action: `thread_${action}`,
+    summary: `${actor.role === 'administrator' ? 'Администратор' : 'Оператор'} отметил тред ${phone} (${action})`,
+    target_type: 'inbox_thread', target_id: r.phone_key });
+  return r;
+}
+
 module.exports = {
   summary, pipeline, inbox, drafts, kb, decide, chat, LEAD_STATE_LABELS,
   businessDashboard, sources, listUsers, createUser, setUserActive, kbPending, kbDecide, auditLog,
   // attention-first (pure + db)
   orderDangers, orderTimelineSteps, attention, orderTimeline, orderWorkspace, attentionCenter,
+  // task inbox (WhatsApp-style to-do)
+  taskInbox, taskThread, markThread, waSearch,
 };

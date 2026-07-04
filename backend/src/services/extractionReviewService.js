@@ -69,8 +69,8 @@ function composeReason(docType, extracted, file = {}) {
 // Returns { generated:false, reason, ... } when the text could not be read, or the full
 // review-package object when it could. NEVER writes anything. `deps.pdfText`/`deps.ocr`
 // are test seams forwarded to documentUnderstandingService.
-function buildReviewPackage(file = {}, deps = {}) {
-  const u = du.understandDocument(file, deps);
+async function buildReviewPackage(file = {}, deps = {}) {
+  const u = await du.understandDocument(file, deps);
   if (!u.ok) {
     return { generated: false, reason: u.reason, note: u.note, file_name: file.file_name || null };
   }
@@ -121,7 +121,7 @@ function dedupeKey(file = {}, origin = 'upload') {
 async function createFromFile(file = {}, { origin = 'upload', messageId = null, decidedBy } = {}, deps = {}) {
   const ExtractionReview = deps.ExtractionReview || require('../models/ExtractionReview').ExtractionReview;
 
-  const pkg = buildReviewPackage(file, deps);
+  const pkg = await buildReviewPackage(file, deps);
   if (!pkg.generated) {
     return { created: false, reason: pkg.reason, note: pkg.note, file_name: pkg.file_name };
   }

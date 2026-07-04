@@ -17,6 +17,7 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const fileClassifier = require('./fileClassifierService');
+const visionOcr = require('./visionOcrService');
 
 // ─── PURE: structured field extraction ─────────────────────────────────────────
 const CURRENCY_AMOUNT_RE = /(\d[\d\s.,]*\d|\d)\s*(сом(?:ов|а)?|руб(?:лей|\.)?|₽|тенге|тг|usd|\$|доллар[а-яё]*|евро|€)/gi;
@@ -154,13 +155,37 @@ function pdfToText(filePath) {
 function tesseractAvailable() {
   try { execFileSync('tesseract', ['--version'], { stdio: 'ignore' }); return true; } catch (_) { return false; }
 }
-function ocrImage(filePath, lang = 'rus+eng') {
+function tesseractImage(filePath, lang = 'rus+eng') {
   return execFileSync('tesseract', [filePath, 'stdout', '-l', lang], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 }
 
-// extractText(file, deps) → { ok, method, text } | { ok:false, reason }
+// pickOcr(file, deps) → an async OCR fn (path → text), or null when no engine is available.
+// Preference: injected deps.ocr (tests) → OpenAI vision (when configured, images only) →
+// local tesseract. Vision is the primary engine now; tesseract is the offline fallback.
+function pickOcr(file, deps) {
+  if (deps.ocr) return async (p) => deps.ocr(p);
+
+  const isImage = fileClassifier.fileKind(file) === 'image';
+  const visionOn = isImage && visionOcr.isConfigured();
+  const tessOn = tesseractAvailable();
+
+  if (visionOn) {
+    return async (p) => {
+      const r = await visionOcr.ocrImage({ path: p, mimeType: file.mime_type, fileName: file.file_name });
+      if (r.ok) return r.text;
+      // Vision failed (API error / bad model id): fall back to tesseract if we have it,
+      // otherwise surface the vision failure so the operator sees why.
+      if (tessOn) return tesseractImage(p);
+      throw new Error(`vision_ocr_${r.reason}${r.detail ? ': ' + r.detail : ''}`);
+    };
+  }
+  if (tessOn) return async (p) => tesseractImage(p);
+  return null;
+}
+
+// extractText(file, deps) → { ok, method, text } | { ok:false, reason }  (async)
 // file = { media_ref|path, mime_type, file_name }. deps.pdfText / deps.ocr are test seams.
-function extractText(file = {}, deps = {}) {
+async function extractText(file = {}, deps = {}) {
   const path = file.media_ref || file.path;
   if (!path) return { ok: false, reason: 'no_file_path' };
   if (!deps.pdfText && !deps.ocr && !fs.existsSync(path)) return { ok: false, reason: 'file_not_found' };
@@ -176,10 +201,10 @@ function extractText(file = {}, deps = {}) {
   }
 
   if (kind === 'image' || kind === 'pdf') {
-    const ocr = deps.ocr || (tesseractAvailable() ? (p) => ocrImage(p) : null);
-    if (!ocr) return { ok: false, reason: 'ocr_not_available', note: 'Install tesseract (rus+eng) or pass deps.ocr to read scanned images.' };
+    const ocr = pickOcr(file, deps);
+    if (!ocr) return { ok: false, reason: 'ocr_not_available', note: 'Set OPENAI_API_KEY (vision OCR) or install tesseract (rus+eng), or pass deps.ocr.' };
     try {
-      const text = ocr(path);
+      const text = await ocr(path);
       return { ok: !!(text && text.trim()), method: 'ocr', text: text || '' };
     } catch (e) { return { ok: false, reason: 'ocr_failed', error: e.message }; }
   }
@@ -187,9 +212,9 @@ function extractText(file = {}, deps = {}) {
   return { ok: false, reason: `unsupported_kind_${kind}` };
 }
 
-// understandDocument(file, deps) → read contents + extract fields. Read-only.
-function understandDocument(file = {}, deps = {}) {
-  const t = extractText(file, deps);
+// understandDocument(file, deps) → read contents + extract fields. Read-only. (async)
+async function understandDocument(file = {}, deps = {}) {
+  const t = await extractText(file, deps);
   if (!t.ok) return { ok: false, reason: t.reason, note: t.note, file_name: file.file_name || null };
   const extraction = extractFields(t.text);
   return {

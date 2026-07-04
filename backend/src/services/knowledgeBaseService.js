@@ -185,6 +185,16 @@ async function getApprovedKnowledge(category, deps = {}) {
   return KbEntry.find(q).sort({ category: 1 }).lean();
 }
 
+// getBusinessSetting(key) — operator-editable business config stored in the KB as an
+// APPROVED entry with value.kind==='business_setting'. Returns the value object (e.g.
+// { kind, key, url }) or null when unset. The single source of truth for operator-tunable
+// values like application_form_url — never hardcoded in code.
+async function getBusinessSetting(key, deps = {}) {
+  const KbEntry = deps.KbEntry || require('../models/KbEntry').KbEntry;
+  const e = await KbEntry.findOne({ status: 'approved', 'value.kind': 'business_setting', 'value.key': key }).lean();
+  return e ? e.value : null;
+}
+
 // ─── Reports (the four deliverables) ──────────────────────────────────────────
 async function buildReports(deps = {}) {
   const KbVideo = deps.KbVideo || require('../models/KbVideo').KbVideo;
@@ -258,5 +268,6 @@ module.exports = {
   listForReview,
   decideEntry,
   getApprovedKnowledge,
+  getBusinessSetting,
   buildReports,
 };

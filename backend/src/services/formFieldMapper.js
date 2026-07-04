@@ -12,6 +12,10 @@
 // operator selects ДС/СС; the mapper leaves it null and flags it.
 
 const FIELD_SYNONYMS = {
+  // Google Forms submission time. The live sheet's header cell is just "А", so synonyms rarely
+  // match — mapRow falls back to column 0 (always the Forms timestamp). Data looks like
+  // "10.01.2026 13:09:36" (DD.MM.YYYY HH:mm:ss).
+  TIMESTAMP:             ['отметка времени', 'timestamp', 'дата заявки', 'дата создания'],
   APPLICANT_L_E_NAME:    ['название вашего юр', 'юр лица или организации'],
   LEGAL_ENTITY:          ['ваше юр лицо'],
   L_E_COUNTRY:           ['страна регистрации'],
@@ -32,6 +36,7 @@ const FIELD_SYNONYMS = {
 
 // Order matters: ITEMS must be assigned (claims combined column P) before COMPOSITION/TNVED.
 const FIELD_ORDER = [
+  'TIMESTAMP',
   'APPLICANT_L_E_NAME', 'LEGAL_ENTITY', 'L_E_COUNTRY', 'AGE', 'INN', 'L_E_ADRESS', 'PHONE_NUMBER', 'PHONE_WHATSAPP',
   'EMAIL', 'MANUFACTURER_L_E_NAME', 'MANUFACTURER_COUNTRY', 'MANUFACTURER_ADRESS', 'BRAND_NAME',
   'ITEMS', 'ITEM_COMPOSITION', 'TNVED',
@@ -61,6 +66,20 @@ function detectColumns(header = []) {
 
 const cell = (row, idx) => (idx >= 0 && row[idx] != null ? String(row[idx]).trim() : '');
 
+// parseFormDate — Google Forms timestamp "10.01.2026 13:09:36" (DD.MM.YYYY [HH:mm[:ss]]) → Date.
+// Also tolerates ISO. Returns null when unparseable. PURE.
+function parseFormDate(s) {
+  const str = String(s == null ? '' : s).trim();
+  if (!str) return null;
+  const m = str.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ ,]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (m) {
+    const dt = new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0));
+    return isNaN(dt.getTime()) ? null : dt;
+  }
+  const iso = new Date(str);
+  return isNaN(iso.getTime()) ? null : iso;
+}
+
 // Extract distinct 10-digit TN VED codes from free text (digits may be space/comma separated).
 function extractTnved(text) {
   const codes = (String(text || '').match(/\b\d[\d\s.]{8,14}\d\b/g) || [])
@@ -88,8 +107,14 @@ function mapRow(header = [], row = [], { docType = null } = {}) {
     ? tnvedCodes.map(code => ({ name: items_text || '(см. список товаров)', composition: composition_text, tnved: code }))
     : [{ name: items_text, composition: composition_text, tnved: '' }];
 
+  // Submission date: dedicated TIMESTAMP column if a real header matched, else Google Forms
+  // column 0 (the live sheet's header cell is just "А", so it won't match by name).
+  const tsIdx = cols.TIMESTAMP >= 0 ? cols.TIMESTAMP : 0;
+  const submittedDate = parseFormDate(row[tsIdx]);
+
   const application = {
     doc_type: docType,
+    submitted_at: submittedDate ? submittedDate.toISOString() : null,
     applicant: {
       name:    g('APPLICANT_L_E_NAME'),
       inn:     g('INN'),
@@ -122,4 +147,4 @@ function mapRow(header = [], row = [], { docType = null } = {}) {
   return application;
 }
 
-module.exports = { FIELD_SYNONYMS, FIELD_ORDER, REQUIRED, normalize, detectColumns, extractTnved, mapRow };
+module.exports = { FIELD_SYNONYMS, FIELD_ORDER, REQUIRED, normalize, detectColumns, extractTnved, parseFormDate, mapRow };

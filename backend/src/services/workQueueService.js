@@ -84,6 +84,7 @@ async function newApplications(deps = {}) {
       legal_entity: app.legal_entity || null,
       phone: app.applicant.phone || null,
       age: app.age || null,
+      submitted_at: app.submitted_at || null,   // form submission date (col A) — flags stale apps
       action: 'create_mockup',
     });
   }

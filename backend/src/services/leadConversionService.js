@@ -19,6 +19,7 @@
 
 const leadIntent = require('./leadIntentService');
 const templates  = require('./leadReplyTemplates');
+const knowledgeBase = require('./knowledgeBaseService');
 const pi          = require('./piCalculationService');
 const payments    = require('./paymentRecognitionService');
 const errorUtils  = require('../utils/errorUtils');
@@ -147,7 +148,15 @@ async function proposeDraft(lead, kind, ctx = {}, deps = {}) {
   if (open) return { skipped: true, reason: 'open_draft_exists' };
 
   const language = lead.language || 'ru';
-  const text = templates.render(kind, { ...ctx, language, service_category: lead.service_category, lead });
+  // For link-bearing kinds, resolve the application form URL from the KB business setting
+  // (operator-editable; falls back to env in templates). KB-offline → null → templates surface
+  // a clear "not configured" notice for the operator. Never hardcoded.
+  const linkCtx = {};
+  if (kind === 'application_link' || kind === 'reminder') {
+    const setting = await knowledgeBase.getBusinessSetting('application_form_url', deps).catch(() => null);
+    if (setting && setting.url) linkCtx.application_form_url = setting.url;
+  }
+  const text = templates.render(kind, { ...ctx, ...linkCtx, language, service_category: lead.service_category, lead });
   const doc = {
     lead_id:       lead._id,
     platform:      lead.platform,
@@ -200,17 +209,22 @@ async function ingestInquiry(raw, deps = {}) {
     else await lead.save();
   }
 
+  // deps.skipDrafts — track the lead + transition but DON'T queue greeting/education drafts.
+  // Used by the Telegram menu handler, which answers the FAQ command instantly itself, so the
+  // operator queue isn't doubled up with now-redundant drafts.
   const drafts = [];
   if (lead.state === 'new') {
     await transition(lead, 'inquiry');
-    const g = await proposeDraft(lead, 'greeting', { reason: 'New lead — establish contact (Stage 1).' }, deps);
-    if (g.draft) drafts.push(g.draft);
-    const e = await proposeDraft(lead, 'education', {
-      include_pi: /pi|пи|состав|композиц/i.test(msg.text), include_tnved: /тн\s*вэд|tnved|код/i.test(msg.text),
-      reason: 'Reduce uncertainty — basic education (Stage 3).',
-    }, deps);
-    if (e.draft) drafts.push(e.draft);
-  } else if (lead.state === 'recovered') {
+    if (!deps.skipDrafts) {
+      const g = await proposeDraft(lead, 'greeting', { reason: 'New lead — establish contact (Stage 1).' }, deps);
+      if (g.draft) drafts.push(g.draft);
+      const e = await proposeDraft(lead, 'education', {
+        include_pi: /pi|пи|состав|композиц/i.test(msg.text), include_tnved: /тн\s*вэд|tnved|код/i.test(msg.text),
+        reason: 'Reduce uncertainty — basic education (Stage 3).',
+      }, deps);
+      if (e.draft) drafts.push(e.draft);
+    }
+  } else if (lead.state === 'recovered' && !deps.skipDrafts) {
     const a = await proposeDraft(lead, 'application_link', { reason: 'Recovered lead — back to application.' }, deps);
     if (a.draft) drafts.push(a.draft);
   }
