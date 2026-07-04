@@ -136,24 +136,16 @@ test('parseFormDate parses Google Forms DD.MM.YYYY HH:mm:ss', () => {
   assert.strictEqual(parseFormDate('не дата'), null);
 });
 
-test('new application: age_days + stale flag (14–30d shown), and >30 days hidden', () => {
-  const recent  = new Date(NOW - 3 * 86400000).toISOString();   // 3 days ago — fresh, shown
-  const stale20 = new Date(NOW - 20 * 86400000).toISOString();  // 20 days ago — stale «давняя», shown
-  const tooOld  = new Date(NOW - 40 * 86400000).toISOString();  // 40 days ago — hidden (>30, abandoned)
-  const { tasks, hidden_new_applications } = buildTasks({
-    newApplications: [
-      { sheet_row: 10, applicant: 'ИП Свежий',  submitted_at: recent },
-      { sheet_row: 11, applicant: 'ООО Давний',  submitted_at: stale20 },
-      { sheet_row: 12, applicant: 'ООО Забытый', submitted_at: tooOld },
-    ], now: NOW,
-  });
-  const fresh = tasks.find(t => t.sheet_row === 10);
-  const stale = tasks.find(t => t.sheet_row === 11);
-  assert.strictEqual(fresh.age_days, 3);  assert.strictEqual(fresh.stale, false);
-  assert.strictEqual(stale.age_days, 20); assert.strictEqual(stale.stale, true);
-  assert.ok(/давняя/.test(stale.subtitle));
-  assert.strictEqual(tasks.find(t => t.sheet_row === 12), undefined); // >30 days → hidden
-  assert.strictEqual(hidden_new_applications, 1);
+// Per the 2026-07-04 rule, submission-date age ALONE no longer hides an application — hiding is
+// driven by WhatsApp signals (see new-application-filter.test.js). A date-only app stays shown
+// and carries needs_calc_reply (we haven't sent the calc).
+test('new application with only a submission date → shown, age_days set, needs_calc_reply', () => {
+  const submitted = new Date(NOW - 40 * 86400000).toISOString();  // even 40 days: shown (no WhatsApp signal)
+  const { tasks } = buildTasks({ newApplications: [{ sheet_row: 10, applicant: 'ИП Свежий', submitted_at: submitted }], now: NOW });
+  const t = tasks.find(x => x.sheet_row === 10);
+  assert.ok(t, 'date-only application is still shown');
+  assert.strictEqual(t.age_days, 40);
+  assert.strictEqual(t.needs_calc_reply, true);
 });
 
 test('threadKey falls back through phone_key → lid_key → normalized phone', () => {

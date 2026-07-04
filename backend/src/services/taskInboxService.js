@@ -26,9 +26,18 @@ function waName(m = {}) {
 
 const REASON_RU = { direct: 'личка', mention: 'упомянули вас', reply: 'ответ вам', keyword: 'спросили про сертификацию' };
 
-// Максимальный возраст «новой заявки» в инбоксе — заявки старше уже неактуальны (клиент
-// пропал), их прячем из списка «Новые заявки». Env: NEW_APP_MAX_AGE_DAYS.
-const NEW_APP_MAX_AGE_DAYS = parseInt(process.env.NEW_APP_MAX_AGE_DAYS, 10) || 30;
+// Пороги «старой» заявки (см. таблицу решений в секции 3 buildTasks):
+//  • ABANDONED — прошло >N дней с последнего сообщения клиента И мы НИ РАЗУ не ответили в
+//    WhatsApp → заброшена, прячем. Env: NEW_APP_ABANDONED_DAYS (по умолч. 50).
+//  • SILENCE_AFTER_CALC — мы отправили клиенту просчёт (сумму/протоколы), а он молчит >N дней
+//    (ни да, ни нет) → потерян/думает, прячем. Env: NEW_APP_SILENCE_AFTER_CALC_DAYS (14).
+const NEW_APP_ABANDONED_DAYS = parseInt(process.env.NEW_APP_ABANDONED_DAYS, 10) || 50;
+const NEW_APP_SILENCE_AFTER_CALC_DAYS = parseInt(process.env.NEW_APP_SILENCE_AFTER_CALC_DAYS, 10) || 14;
+
+// weSentCalc(text) — ИСХОДЯЩЕЕ сообщение, где мы озвучили клиенту просчёт: упоминание
+// протокола/суммы/итога + число (≥3 цифр). Так агент понимает, отправляли мы уже сумму или нет.
+const CALC_SENT_RE = /(протокол|прото\b|\bпи\b|итог|общая\s+сумма|к\s+оплате|стоимост|обойд[её]тся|выйдет)/i;
+function weSentCalc(text = '') { const t = String(text || ''); return CALC_SENT_RE.test(t) && /\d[\d\s]{2,}/.test(t); }
 
 // isRefused(text) — клиент по переписке ЯВНО отказался делать документ у нас. Консервативно:
 // прячем заявку только на однозначных формулировках отказа (ложное сокрытие = потерянный
@@ -196,49 +205,59 @@ function buildTasks(input = {}) {
     });
   }
 
-  // Index inbound WhatsApp text per client phone_key — used to hide new applications where the
-  // client already refused OR reported payment in chat (we "сшиваем" the form row with the WA
-  // thread + «Декларация» to decide, per operator request).
-  const waTextByKey = new Map();
-  for (const m of waMessages) {
-    if (m.direction && m.direction !== 'inbound') continue;
-    const k = threadKey(m);
-    if (!k || !m.body) continue;
-    const arr = waTextByKey.get(k) || []; arr.push(String(m.body)); waTextByKey.set(k, arr);
+  // WhatsApp-сигналы по клиенту (обе стороны) для решения «новая заявка или старая».
+  // waSignalsByKey (готовится в tasks(), обе стороны): pk → { lastInboundAt, hasOutbound,
+  // sentCalc, inboundTexts[] }. Если не передано — строим по inbound из waMessages (fallback).
+  const signalsByKey = input.waSignalsByKey instanceof Map ? input.waSignalsByKey : null;
+  const inboundTextByKey = new Map();
+  if (!signalsByKey) {
+    for (const m of waMessages) {
+      if (m.direction && m.direction !== 'inbound') continue;
+      const k = threadKey(m); if (!k || !m.body) continue;
+      const arr = inboundTextByKey.get(k) || []; arr.push(String(m.body)); inboundTextByKey.set(k, arr);
+    }
   }
+  const sigFor = (pk) => (signalsByKey && signalsByKey.get(pk)) ||
+    { lastInboundAt: null, hasOutbound: false, sentCalc: false, inboundTexts: inboundTextByKey.get(pk) || [] };
 
-  // 3) New applications with no price calculation yet. The submission date (col A) lets the
-  //    operator spot STALE applications the client may have abandoned.
-  // HIDDEN from the list (per operator request): older than NEW_APP_MAX_AGE_DAYS, already paid
-  //    (Декларация col G > 0 OR client said so in WhatsApp), or refused in WhatsApp.
+  // 3) NEW applications. Таблица решений (per operator 2026-07-04):
+  //   СКРЫТЬ (старая): оплатил ИЛИ в Декларации; отказ (regex/смысл); мы отправили просчёт, а
+  //     клиент молчит > SILENCE_AFTER_CALC дней; прошло > ABANDONED дней и мы НИ РАЗУ не ответили.
+  //   ПОКАЗАТЬ (новая): всё остальное. needs_calc_reply = мы ещё НЕ отправили просчёт → агент
+  //     предлагает оператору ответить клиенту в WhatsApp с общей суммой.
   let hiddenNewApps = 0;
   for (const a of newApplications) {
-    const subMs = a.submitted_at ? Date.parse(a.submitted_at) : null;
-    const ageMs = subMs ? Math.max(0, now - subMs) : 0;
-    const days = subMs ? Math.floor(ageMs / 86400000) : null;
-
     const pk = a.phone ? matchKey(a.phone) : '';
     const decl = pk ? (declByPhone[pk] || null) : null;
-    const waTexts = pk ? (waTextByKey.get(pk) || []) : [];
-    const tooOld  = days != null && days > NEW_APP_MAX_AGE_DAYS;
-    const isPaid  = (decl && decl.paid > 0) || waTexts.some(clientSaidPaid);
-    const refused = waTexts.some(isRefused) || (pk && semanticRefused.has(pk));   // regex ИЛИ смысловой (LLM)
-    if (tooOld || isPaid || refused) { hiddenNewApps++; continue; }
+    const s = sigFor(pk);
+    const inboundTexts = s.inboundTexts || [];
+    const idleDays = s.lastInboundAt ? Math.floor((now - s.lastInboundAt) / 86400000) : null;
 
-    const stale = days != null && days >= 14;                // ~2 weeks silent → likely abandoned
-    const dateRu = subMs ? new Date(subMs).toLocaleDateString('ru-RU') : 'дата неизвестна';
+    const inDeclaration = !!decl;                                              // записан в Декларацию
+    const isPaid   = (decl && decl.paid > 0) || inboundTexts.some(clientSaidPaid);
+    const refused  = inboundTexts.some(isRefused) || (pk && semanticRefused.has(pk));
+    const silentAfterCalc = s.sentCalc && idleDays != null && idleDays > NEW_APP_SILENCE_AFTER_CALC_DAYS;
+    const abandoned = !s.hasOutbound && idleDays != null && idleDays > NEW_APP_ABANDONED_DAYS;
+    if (inDeclaration || isPaid || refused || silentAfterCalc || abandoned) { hiddenNewApps++; continue; }
+
+    const needsCalcReply = !s.sentCalc;                    // просчёт клиенту ещё не отправляли
+    const subMs = a.submitted_at ? Date.parse(a.submitted_at) : null;
+    const ageMs = subMs ? Math.max(0, now - subMs) : (s.lastInboundAt ? Math.max(0, now - s.lastInboundAt) : 0);
+    const dateRu = subMs ? new Date(subMs).toLocaleDateString('ru-RU') : (idleDays != null ? `последнее сообщение ${idleDays} дн. назад` : 'дата неизвестна');
     tasks.push({
       kind: 'new_application',
-      phone: null, phone_key: null,
+      phone: a.phone || null, phone_key: pk || null,
       title: `Новая заявка · ${a.applicant || a.legal_entity || '—'}`,
-      subtitle: `${dateRu}${days != null ? ` · ${days} дн. назад` : ''}${stale ? ' · ⚠ давняя' : ''}`,
-      last_message: 'нет просчёта — нужно подготовить',
+      subtitle: `${dateRu}${needsCalcReply ? ' · ⚠ просчёт не отправлен' : ' · ждём ответа клиента'}`,
+      last_message: needsCalcReply ? 'нет просчёта — предложить оператору отправить сумму клиенту' : 'просчёт отправлен — ждём решения клиента',
       channel: 'application',
+      needs_calc_reply: needsCalcReply,
+      idle_days: idleDays,
       age_ms: ageMs,
-      last_at: a.submitted_at || null,
+      last_at: a.submitted_at || (s.lastInboundAt ? new Date(s.lastInboundAt).toISOString() : null),
       submitted_at: a.submitted_at || null,
-      age_days: days,
-      stale,
+      age_days: subMs ? Math.floor((now - subMs) / 86400000) : idleDays,
+      stale: idleDays != null && idleDays >= NEW_APP_SILENCE_AFTER_CALC_DAYS,
       unread: 0,               // a new application is not an "unread message"
       sheet_row: a.sheet_row ?? null,
       priority: 1,
@@ -281,29 +300,40 @@ async function tasks(deps = {}) {
 
   const declByPhone = declIndexFromRows(declRows || []);
 
-  // Смысловой разбор (§4 ТЗ): для новых заявок, где отказ не ловится регуляркой, распознаём его
-  // по СМЫСЛУ (LLM точечно) и передаём готовый набор ключей в чистую buildTasks. LLM НЕ на пути
-  // рендера каждой строки: только последнее входящее по неоднозначным заявкам, с бюджетом и
-  // кэшем (messageIntentService). Устойчиво: нет ключа/ошибка → просто без смыслового сигнала.
+  // WhatsApp-сигналы по номерам новых заявок (ОБЕ стороны) — чтобы решить «новая/старая»:
+  // отвечали ли мы клиенту, отправляли ли просчёт (сумму/протоколы), когда он писал последний раз.
+  const newAppKeys = [...new Set((newApps || []).map(a => (a.phone ? matchKey(a.phone) : '')).filter(Boolean))];
+  const waSignalsByKey = new Map();
+  if (newAppKeys.length) {
+    const msgs = await safe(WhatsAppMessage.find({ phone_key: { $in: newAppKeys } }).sort({ received_at: -1 }).limit(3000).lean(), []);
+    for (const m of msgs) {
+      const k = m.phone_key || matchKey(m.from_phone) || matchKey(m.to_phone); if (!k) continue;
+      let s = waSignalsByKey.get(k);
+      if (!s) { s = { lastInboundAt: null, hasOutbound: false, sentCalc: false, inboundTexts: [] }; waSignalsByKey.set(k, s); }
+      const at = new Date(m.received_at || m.sent_at || m.created_at || 0).getTime();
+      if (m.direction === 'outbound') {
+        s.hasOutbound = true;
+        if (!s.sentCalc && m.body && weSentCalc(m.body)) s.sentCalc = true;   // мы отправили просчёт
+      } else {
+        if (at && (!s.lastInboundAt || at > s.lastInboundAt)) s.lastInboundAt = at;
+        if (m.body) s.inboundTexts.push(String(m.body));                      // desc → [0] самое свежее
+      }
+    }
+  }
+
+  // Смысловой разбор отказа (§4): по последнему входящему неоднозначных заявок — LLM ТОЧЕЧНО
+  // (regex-фолбэк внутри), с бюджетом и кэшем, вне пути рендера. Нет ключа/ошибка → без сигнала.
   const semanticRefusedKeys = new Set();
   try {
     const messageIntent = deps.messageIntent || require('./messageIntentService');
-    const latestInbound = new Map();                       // phone_key → текст последнего входящего
-    for (const m of waMessages) {
-      if (m.direction && m.direction !== 'inbound') continue;
-      const k = threadKey(m); if (!k || !m.body) continue;
-      if (!latestInbound.has(k)) latestInbound.set(k, m.body);   // waMessages newest-first
-    }
-    let budget = Number.isFinite(deps.llmBudget) ? deps.llmBudget : 4;   // максимум LLM-вызовов за загрузку
-    for (const a of (newApps || [])) {
+    let budget = Number.isFinite(deps.llmBudget) ? deps.llmBudget : 4;
+    for (const pk of newAppKeys) {
       if (budget <= 0) break;
-      const pk = a.phone ? matchKey(a.phone) : ''; if (!pk) continue;
       const decl = declByPhone[pk];
-      if (decl && decl.paid > 0) continue;                 // оплачен — и так скрыт, LLM не тратим
-      const subMs = a.submitted_at ? Date.parse(a.submitted_at) : null;
-      if (subMs && (Date.now() - subMs) / 86400000 > NEW_APP_MAX_AGE_DAYS) continue;   // старая — и так скрыта
-      const last = latestInbound.get(pk); if (!last) continue;
-      if (isRefused(last)) continue;                        // regex уже поймает — LLM не нужен
+      if (decl) continue;                                  // в Декларации — и так скрыт, LLM не тратим
+      const s = waSignalsByKey.get(pk);
+      const last = s && s.inboundTexts[0]; if (!last) continue;
+      if (isRefused(last)) continue;                       // regex уже поймает — LLM не нужен
       const r = await messageIntent.classifyDecision(last, deps);
       if (r && r.decision === 'refuse' && (r.confidence || 0) >= 0.7) semanticRefusedKeys.add(pk);
       if (r && r.method === 'llm') budget--;
@@ -312,7 +342,7 @@ async function tasks(deps = {}) {
 
   return buildTasks({
     waMessages, threadStates, labEmails, newApplications: newApps || [],
-    declByPhone, semanticRefusedKeys, now: Date.now(),
+    declByPhone, semanticRefusedKeys, waSignalsByKey, now: Date.now(),
   });
 }
 
@@ -423,4 +453,4 @@ async function searchArchive({ q, phone, limit = 60 } = {}, deps = {}) {
   }));
 }
 
-module.exports = { buildTasks, threadKey, waName, declIndexFromRows, proposeReply, fmtSom, isRefused, clientSaidPaid, tasks, thread, markThread, searchArchive };
+module.exports = { buildTasks, threadKey, waName, declIndexFromRows, proposeReply, fmtSom, isRefused, clientSaidPaid, weSentCalc, tasks, thread, markThread, searchArchive };

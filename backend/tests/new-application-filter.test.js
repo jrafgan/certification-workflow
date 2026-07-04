@@ -1,9 +1,10 @@
 'use strict';
 
-// Tests for hiding «Новые заявки» in the task inbox (taskInboxService.buildTasks):
-// applications older than 30 days, already paid (Декларация col G OR WhatsApp), or refused in
-// WhatsApp are stitched together from the form row + WA thread + «Декларация» and hidden.
-// Also unit-covers isRefused / clientSaidPaid (must not flag legit leads).
+// Tests for the «Новые заявки» decision table in taskInboxService.buildTasks (per operator
+// 2026-07-04). An application is HIDDEN (old) when: in «Декларация» / paid; refused (regex or
+// semantic); we sent the calc and the client is silent > SILENCE_AFTER_CALC days; or > ABANDONED
+// days since the client's last message AND we never replied. Otherwise SHOWN, with
+// needs_calc_reply = we haven't sent the calc yet. Also unit-covers weSentCalc.
 //
 // Run: node tests/new-application-filter.test.js
 
@@ -17,80 +18,84 @@ function test(name, fn) {
 }
 
 const NOW = Date.parse('2026-07-04T12:00:00Z');
-const daysAgo = (d) => new Date(NOW - d * 86400000).toISOString();
 const key = (p) => String(p).replace(/\D/g, '').slice(-9);
-
-// Build a minimal buildTasks input with one new application + optional WA/Declaration signals.
-function run({ app, wa = [], decl = {} } = {}) {
-  return svc.buildTasks({ waMessages: wa, threadStates: {}, labEmails: [], newApplications: [app], declByPhone: decl, now: NOW });
-}
-function newApps(r) { return r.tasks.filter(t => t.kind === 'new_application'); }
-
+const daysAgoMs = (d) => NOW - d * 86400000;
 const PHONE = '996700111222';
-const baseApp = { sheet_row: 5, applicant: 'ИП Тест', legal_entity: null, phone: PHONE, submitted_at: daysAgo(3) };
+const PK = key(PHONE);
+const baseApp = { sheet_row: 5, applicant: 'ИП Тест', phone: PHONE, submitted_at: null };
 
-console.log('\n[buildTasks — hide new applications]');
+// run({ app, wa, decl, signals }) → buildTasks result
+function run({ app = baseApp, wa = [], decl = {}, signals = null } = {}) {
+  return svc.buildTasks({
+    waMessages: wa, threadStates: {}, labEmails: [], newApplications: [app],
+    declByPhone: decl, waSignalsByKey: signals, now: NOW,
+  });
+}
+const newApps = (r) => r.tasks.filter(t => t.kind === 'new_application');
+const sig = (o) => new Map([[PK, Object.assign({ lastInboundAt: null, hasOutbound: false, sentCalc: false, inboundTexts: [] }, o)]]);
 
-test('fresh application, no signals → shown', () => {
-  const r = run({ app: baseApp });
+console.log('\n[decision table — hide vs show]');
+
+test('fresh, no WhatsApp yet, not in Declaration → shown, needs_calc_reply', () => {
+  const r = run({});
   assert.strictEqual(newApps(r).length, 1);
-  assert.strictEqual(r.hidden_new_applications, 0);
+  assert.strictEqual(newApps(r)[0].needs_calc_reply, true);
 });
 
-test('older than 30 days → hidden', () => {
-  const r = run({ app: { ...baseApp, submitted_at: daysAgo(31) } });
-  assert.strictEqual(newApps(r).length, 0);
-  assert.strictEqual(r.hidden_new_applications, 1);
-});
-
-test('exactly 30 days → still shown (strict > cutoff)', () => {
-  const r = run({ app: { ...baseApp, submitted_at: daysAgo(30) } });
-  assert.strictEqual(newApps(r).length, 1);
-});
-
-test('paid in «Декларация» (col G) → hidden', () => {
-  const r = run({ app: baseApp, decl: { [key(PHONE)]: { client: 'ИП Тест', status: 'Запустить', count: 1, paid: 15000, debt: 0 } } });
+test('in «Декларация» → hidden', () => {
+  const r = run({ decl: { [PK]: { client: 'ИП Тест', status: 'Запустить', count: 1, paid: 0, debt: 0 } } });
   assert.strictEqual(newApps(r).length, 0);
   assert.strictEqual(r.hidden_new_applications, 1);
 });
 
 test('client reported payment in WhatsApp → hidden', () => {
-  const r = run({ app: baseApp, wa: [{ direction: 'inbound', phone_key: key(PHONE), body: 'Оплатила, вот чек', received_at: daysAgo(1) }] });
+  const r = run({ wa: [{ direction: 'inbound', phone_key: PK, body: 'Оплатила, вот чек', received_at: daysAgoMs(1) }] });
   assert.strictEqual(newApps(r).length, 0);
 });
 
 test('client refused in WhatsApp → hidden', () => {
-  const r = run({ app: baseApp, wa: [{ direction: 'inbound', phone_key: key(PHONE), body: 'Спасибо, передумал, сделаю в другом месте', received_at: daysAgo(1) }] });
+  const r = run({ wa: [{ direction: 'inbound', phone_key: PK, body: 'Спасибо, передумали', received_at: daysAgoMs(1) }] });
   assert.strictEqual(newApps(r).length, 0);
 });
 
-test('outbound-only refusal-looking text does NOT hide (only client messages count)', () => {
-  const r = run({ app: baseApp, wa: [{ direction: 'outbound', phone_key: key(PHONE), body: 'вы передумали?', received_at: daysAgo(1) }] });
-  assert.strictEqual(newApps(r).length, 1);
+test('semantic refusal key (LLM-provided) → hidden', () => {
+  const r = svc.buildTasks({ waMessages: [], threadStates: {}, labEmails: [], newApplications: [baseApp], declByPhone: {}, semanticRefusedKeys: new Set([PK]), now: NOW });
+  assert.strictEqual(newApps(r).length, 0);
 });
 
-test('semantic refusal key (LLM-provided) → hidden even without a regex match', () => {
-  const r = svc.buildTasks({ waMessages: [], threadStates: {}, labEmails: [], newApplications: [baseApp], declByPhone: {}, semanticRefusedKeys: new Set([key(PHONE)]), now: NOW });
+test('abandoned: >50 days since client wrote AND we never replied → hidden', () => {
+  const r = run({ signals: sig({ lastInboundAt: daysAgoMs(60), hasOutbound: false }) });
   assert.strictEqual(newApps(r).length, 0);
   assert.strictEqual(r.hidden_new_applications, 1);
 });
 
-console.log('\n[isRefused / clientSaidPaid]');
-
-test('isRefused: clear declines', () => {
-  ['передумал', 'я отказываюсь', 'нашли дешевле, сделали в другом месте', 'уже оформили', 'спасибо, не надо', 'не актуально', 'кереги жок'].forEach(t =>
-    assert.ok(svc.isRefused(t), `should flag: ${t}`));
+test('>50 days but WE replied (no calc) → shown, needs_calc_reply', () => {
+  const r = run({ signals: sig({ lastInboundAt: daysAgoMs(60), hasOutbound: true, sentCalc: false }) });
+  assert.strictEqual(newApps(r).length, 1);
+  assert.strictEqual(newApps(r)[0].needs_calc_reply, true);
 });
 
-test('isRefused: does NOT flag legit leads / questions', () => {
-  ['Здравствуйте, сколько стоит сертификат?', 'какие документы нужны?', 'хочу оформить декларацию', 'отказное письмо надо'].forEach(t =>
-    assert.ok(!svc.isRefused(t), `should NOT flag: ${t}`));
+test('sent calc + client silent >14 days → hidden', () => {
+  const r = run({ signals: sig({ lastInboundAt: daysAgoMs(20), hasOutbound: true, sentCalc: true }) });
+  assert.strictEqual(newApps(r).length, 0);
 });
 
-test('clientSaidPaid: payment phrases', () => {
-  ['оплатил', 'перевела деньги', 'вот чек', 'квитанция во вложении'].forEach(t =>
-    assert.ok(svc.clientSaidPaid(t), `should flag paid: ${t}`));
-  assert.ok(!svc.clientSaidPaid('сколько стоит оплата?'.replace('оплата', 'цена')), 'question not paid');
+test('sent calc + client active recently (<14d) → shown, calc already sent', () => {
+  const r = run({ signals: sig({ lastInboundAt: daysAgoMs(5), hasOutbound: true, sentCalc: true }) });
+  assert.strictEqual(newApps(r).length, 1);
+  assert.strictEqual(newApps(r)[0].needs_calc_reply, false);
+});
+
+console.log('\n[weSentCalc]');
+
+test('weSentCalc: detects a quote we sent', () => {
+  ['Итого 35 000 сом за 2 протокола', 'стоимость составит 18000 сом', 'по вашему товару 3 протокола, к оплате 45 000'].forEach(t =>
+    assert.ok(svc.weSentCalc(t), `should detect calc: ${t}`));
+});
+
+test('weSentCalc: plain chat is not a calc', () => {
+  ['Здравствуйте!', 'пришлите состав ткани', 'спасибо'].forEach(t =>
+    assert.ok(!svc.weSentCalc(t), `should NOT detect calc: ${t}`));
 });
 
 console.log(`\n${fail ? 'FAIL' : 'OK'} — ${pass} passed, ${fail} failed`);
