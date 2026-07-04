@@ -10,14 +10,23 @@
   <header class="topbar">
     <div class="brand">⚙ Центр управления</div>
     <nav class="tabs" id="tabs">
-      <button data-screen="dashboard" class="active">Главная</button>
-      <button data-screen="inbox">Входящие задачи</button>
-      <button data-screen="drafts">Черновики</button>
-      <button data-screen="pipeline">Воронка клиентов</button>
+      <button data-screen="tasks" class="active">Задачи</button>
       <button data-screen="chat">Чат с агентом</button>
-      <button data-screen="kb">База знаний</button>
-      <button data-screen="audit">Журнал действий</button>
-      <button data-screen="users" data-admin="1">Пользователи</button>
+      <details class="more-menu">
+        <summary>Ещё ▾</summary>
+        <div class="more-list">
+          <button data-screen="dashboard">Главная</button>
+          <button data-screen="inbox">Входящие задачи</button>
+          <button data-screen="emails">Письма без ответа</button>
+          <button data-screen="drafts">Черновики</button>
+          <button data-screen="pipeline">Воронка клиентов</button>
+          <button data-screen="first-contact">Новые номера</button>
+          <button data-screen="stats">Статистика</button>
+          <button data-screen="kb">База знаний</button>
+          <button data-screen="audit">Журнал действий</button>
+          <button data-screen="users" data-admin="1">Пользователи</button>
+        </div>
+      </details>
     </nav>
     <div class="opbar">
       <span id="dbstatus" class="db unknown">База ?</span>
@@ -28,8 +37,26 @@
   </header>
 
   <main id="screens">
+    <!-- Задачи — главный экран: список тредов (как в WhatsApp) + деталь -->
+    <section id="screen-tasks" class="screen active">
+      <div class="tasks-wrap">
+        <div class="tasks-list-pane">
+          <div class="tasks-head">
+            <h2>Задачи</h2>
+            <span class="muted" id="tasks-count"></span>
+          </div>
+          <input id="tasks-search" class="tasks-search" placeholder="🔍 Поиск по имени, номеру или тексту…" />
+          <div id="tasks-filters" class="tasks-filters"></div>
+          <div id="tasks-list" class="tasks-list"></div>
+        </div>
+        <div class="tasks-detail-pane" id="task-detail">
+          <div class="td-empty">Выберите задачу слева, чтобы открыть переписку и детали.</div>
+        </div>
+      </div>
+    </section>
+
     <!-- Главная — очередь внимания -->
-    <section id="screen-dashboard" class="screen active">
+    <section id="screen-dashboard" class="screen">
       <h2>Главная</h2>
       <p class="muted">Что требует действия сегодня</p>
       <h3>Сущность по номеру WhatsApp</h3>
@@ -55,6 +82,12 @@
     <section id="screen-inbox" class="screen">
       <h2>Входящие задачи <span class="muted">— всё, что ждёт решения</span></h2>
       <div id="inbox-list" class="stream"></div>
+    </section>
+
+    <!-- Письма без ответа -->
+    <section id="screen-emails" class="screen">
+      <h2>Письма без ответа <span class="muted">— цепочки Gmail, где мы ещё не ответили</span></h2>
+      <div id="emails-list" class="stream"></div>
     </section>
 
     <!-- Черновики -->
@@ -85,6 +118,26 @@
         <button id="chat-send">Спросить</button>
       </div>
       <div id="chat-log" class="chat-log"></div>
+    </section>
+
+    <!-- Новые номера из заявок (холодный контакт — гейт + шаблон) -->
+    <section id="screen-first-contact" class="screen">
+      <h2>Новые номера из заявок <span class="muted">— номера из заявок, которые нам ни разу не писали</span></h2>
+      <p class="muted">Агент готовит проверочное сообщение по утверждённому шаблону WhatsApp. Отправка — только после вашего подтверждения; агент сам не отправляет.</p>
+      <button id="fc-scan">Найти новые номера</button>
+      <div id="fc-list" class="stream"></div>
+    </section>
+
+    <!-- Статистика операторов (счётчик отправленных ответов) -->
+    <section id="screen-stats" class="screen">
+      <h2>Статистика <span class="muted">— какой сотрудник какие вопросы и сколько обработал</span></h2>
+      <div class="stats-filter">
+        <label>с <input id="stats-from" type="date" /></label>
+        <label>по <input id="stats-to" type="date" /></label>
+        <button id="stats-apply">Показать</button>
+      </div>
+      <p class="muted">Единица учёта — отправленный клиенту ответ. Тип вопроса определяется автоматически по последнему входящему.</p>
+      <div id="stats-body"></div>
     </section>
 
     <!-- База знаний -->

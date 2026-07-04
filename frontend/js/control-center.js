@@ -30,12 +30,13 @@
   const offline = (msg) => `<div class="offline">${esc(msg || 'Нет подключения к базе данных. Запустите MongoDB — интерфейс работает, данные появятся после подключения.')}</div>`;
 
   // ── навигация ───────────────────────────────────────────────────────────
-  const SCREENS = { dashboard: loadAttention, inbox: loadInbox, drafts: loadDrafts, pipeline: loadPipeline, chat: loadChat, kb: loadKb, audit: loadAudit, users: loadUsers };
-  let current = 'dashboard';
+  const SCREENS = { tasks: loadTasks, dashboard: loadAttention, inbox: loadInbox, emails: loadEmails, drafts: loadDrafts, pipeline: loadPipeline, chat: loadChat, kb: loadKb, audit: loadAudit, users: loadUsers, 'first-contact': loadFirstContact, stats: loadStats };
+  let current = 'tasks';
   function show(name) {
     current = name;
     $$('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.screen === name));
     $$('.screen').forEach(s => s.classList.toggle('active', s.id === 'screen-' + name));
+    const more = document.querySelector('.more-menu'); if (more) more.open = false; // close «Ещё»
     (SCREENS[name] || (() => {}))();
   }
   $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) show(b.dataset.screen); });
@@ -124,6 +125,197 @@
       ${m.duplicate_warning ? `<div class="mail-warn">⚠ ${esc(m.duplicate_warning)}</div>` : ''}
       <div class="muted">Черновик — проверьте и отправьте вручную. Система не отправляет автоматически.</div>
     </div>`;
+  });
+
+  // ── 0. ЗАДАЧИ: главный экран — список тредов (как WhatsApp) + деталь ──────────
+  const CHAN_ICON = { whatsapp: '📱', email: '✉️', application: '🆕' };
+  const KIND_RU = { whatsapp_reply: 'клиент', lab_email: 'письмо', new_application: 'заявка' };
+  function ageRu(ms) {
+    if (ms == null) return '';
+    const m = Math.floor(ms / 60000); if (m < 1) return 'сейчас'; if (m < 60) return m + 'м';
+    const h = Math.floor(m / 60); if (h < 24) return h + 'ч';
+    return Math.floor(h / 24) + 'д';
+  }
+  // Срочность по возрасту: чем дольше без ответа — тем «горячее».
+  function ageClass(ms) { if (ms == null) return ''; const h = ms / 3600000; return h >= 24 ? 'hot' : h >= 4 ? 'warn' : ''; }
+
+  let taskCache = [];
+  let taskFilter = 'all';
+  let taskSearch = '';
+  const TASK_FILTERS = [
+    ['all',      'Все',           () => true],
+    ['unread',   'Непрочитанные', t => t.unread > 0],
+    ['whatsapp', 'Ответить',      t => t.kind === 'whatsapp_reply'],
+    ['paid',     'Оплатившие',    t => t.is_paid],
+    ['email',    'Письма',        t => t.kind === 'lab_email'],
+    ['new',      'Заявки',        t => t.kind === 'new_application'],
+  ];
+  const filterPred = (id) => (TASK_FILTERS.find(f => f[0] === id) || TASK_FILTERS[0])[2];
+  const taskMatchesSearch = (t, q) => !q || [t.title, t.phone, t.subtitle, t.last_message, t.legal_entity].filter(Boolean).join(' ').toLowerCase().includes(q);
+  function taskRow(t) {
+    const icon = CHAN_ICON[t.channel] || '•';
+    const unread = t.unread ? `<span class="tk-dot">${t.unread > 1 ? esc(String(t.unread)) : ''}●</span>` : '';
+    const tag = KIND_RU[t.kind] ? `<span class="tk-tag ${esc(t.kind)}">${KIND_RU[t.kind]}</span> ` : '';
+    return `<div class="tk ${t.unread ? 'unread' : ''} ${ageClass(t.age_ms)}" data-kind="${esc(t.kind)}" data-phone="${esc(t.phone || '')}" data-row="${esc(String(t.sheet_row == null ? '' : t.sheet_row))}">
+      <div class="tk-ic">${icon}</div>
+      <div class="tk-main">
+        <div class="tk-top"><span class="tk-title">${esc(t.title)}</span><span class="tk-age">${ageRu(t.age_ms)}</span></div>
+        <div class="tk-sub">${tag}${esc(t.subtitle || '')}</div>
+        <div class="tk-msg">${esc(t.last_message || '')}</div>
+      </div>${unread}
+    </div>`;
+  }
+  function renderTaskFilters() {
+    const el = $('#tasks-filters'); if (!el) return;
+    el.innerHTML = TASK_FILTERS.map(([id, label, pred]) =>
+      `<button class="tk-f ${taskFilter === id ? 'active' : ''}" data-filter="${id}">${label} <span class="tk-fn">${taskCache.filter(pred).length}</span></button>`).join('');
+  }
+  function renderTaskList() {
+    const shown = taskCache.filter(filterPred(taskFilter)).filter(t => taskMatchesSearch(t, taskSearch));
+    $('#tasks-count').textContent = taskCache.length ? `${shown.length} из ${taskCache.length}` : '';
+    $('#tasks-list').innerHTML = shown.length ? shown.map(taskRow).join('')
+      : (taskCache.length ? '<div class="empty">Ничего не найдено по фильтру/поиску.</div>' : '<div class="empty">Задач нет — всё разобрано ✓</div>');
+  }
+  async function loadTasks() {
+    const d = await getJSON(api('/tasks')); setDb(d.db_connected);
+    if (!d.db_connected) { $('#tasks-list').innerHTML = offline(); $('#tasks-count').textContent = ''; $('#tasks-filters').innerHTML = ''; return; }
+    taskCache = d.tasks || [];
+    renderTaskFilters();
+    renderTaskList();
+  }
+  const bubbleAt = (d) => d ? new Date(d).toLocaleString('ru-RU') : '';
+  const fmtSom = (n) => String(n || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  function renderThread(d) {
+    const e = d.entity;
+    const pay = d.payment || { paid: 0, debt: 0 };
+    const name = (e && e.legal_entity) || d.phone || '';
+
+    // Оплата (кол. G): «оплачено … · долг …».
+    const payHtml = pay.paid > 0
+      ? `<span class="td-pay paid">💰 оплачено ${esc(fmtSom(pay.paid))} сом${pay.debt > 0 ? ` · долг ${esc(fmtSom(pay.debt))} сом` : ''}</span>`
+      : '<span class="td-pay none">не оплачено</span>';
+
+    // Откуда + куда идём.
+    const nextStep = d.next_step
+      ? `«${esc(d.next_step.status || '')}»${d.next_step.actor_ru ? ` · действует: ${esc(d.next_step.actor_ru)}` : ''}`
+      : (e ? 'завершено / нет активного заказа' : '—');
+    const meta = `<div class="td-info">
+        <div><b>Откуда:</b> ${esc(d.origin || '—')}</div>
+        <div><b>Куда идём:</b> ${nextStep}</div>
+        ${e ? `<div><b>Заказов активных:</b> ${esc(String(e.active_count == null ? '' : e.active_count))}</div>` : ''}
+      </div>`;
+
+    // История WhatsApp.
+    const msgs = (d.messages || []).map(m =>
+      `<div class="bub ${m.direction === 'outbound' ? 'out' : 'in'}">${m.is_group ? '<span class="bub-g">группа</span> ' : ''}${esc(m.body)}<span class="bub-at">${bubbleAt(m.at)}</span></div>`).join('') || '<div class="empty">нет сообщений</div>';
+
+    // История почты / лаборатории.
+    const eh = (d.email_history || []).map(t =>
+      `<div class="td-eh"><span class="muted">${bubbleAt(t.at)}</span> ${t.kind === 'lab' ? '🧪 лаборатория' : '✉️ черновик'} · ${esc(t.recipient || '—')} · ${esc(t.status || '')}${t.has_attachment ? ' · 📎' : ''}${t.subject ? ` · ${esc(t.subject)}` : ''}</div>`).join('')
+      || '<div class="muted">Переписки с лабораторией по этому клиенту не найдено.</div>';
+
+    // Предложение агента (всегда есть) — редактируемое, с отправкой в один клик.
+    const pr = d.proposed_reply || {};
+    const canSend = !!d.phone;
+    const reply = `<div class="td-draft">
+        <div class="td-draft-h">🤖 Предложение агента ответить клиенту${pr.reason ? ` <span class="muted">(${esc(pr.reason)})</span>` : ''}</div>
+        <textarea class="td-reply" id="td-reply">${esc(pr.text || '')}</textarea>
+        <div class="actions">
+          ${d.phone ? `<button class="btn-ai" data-ai-phone="${esc(d.phone)}">🤖 Черновик ИИ</button>` : ''}
+          ${canSend ? `<button class="btn-send" data-send-phone="${esc(d.phone)}">✉ Отправить клиенту</button>` : ''}
+          <button class="btn-copy" data-copy-el="td-reply">Скопировать</button>
+          ${pr.draft_id ? `<button class="btn-reject" data-act="reject" data-type="lead_message" data-id="${esc(pr.draft_id)}">Отклонить черновик</button>` : ''}
+        </div>
+        <div class="muted">Проверьте текст и отправьте. Отправка идёт через безопасный канал (анти-бан).</div>
+      </div>`;
+
+    return `<div class="td">
+      <div class="td-head"><b>${esc(name)}</b> <span class="muted">${esc(d.phone || '')}</span> ${payHtml}
+        <span class="td-tools"><button class="btn-done" data-done-phone="${esc(d.phone || '')}">✓ Готово</button>
+        <button class="btn-snooze" data-snooze-phone="${esc(d.phone || '')}">🕒 Отложить</button></span></div>
+      ${meta}
+      ${reply}
+      <div class="td-sec-h">История переписки WhatsApp</div>
+      <div class="td-thread">${msgs}</div>
+      <div class="td-sec-h">Почта / лаборатория</div>
+      <div class="td-eh-list">${eh}</div>
+    </div>`;
+  }
+  async function openThread(phone) {
+    const pane = $('#task-detail'); pane.innerHTML = '<div class="muted">загрузка…</div>';
+    const d = await getJSON(api('/thread?phone=' + encodeURIComponent(phone)));
+    if (d.db_connected === false) { pane.innerHTML = offline(); return; }
+    pane.innerHTML = renderThread(d);
+    if (d.proposed_reply && d.proposed_reply.draft_id) lastItems = [{ type: 'lead_message', id: d.proposed_reply.draft_id, title: 'Ответ клиенту ' + (phone || '') }];
+    postJSON(api('/thread/seen'), { phone, action: 'seen' }).catch(() => {}); // mark read
+  }
+  // «🤖 Черновик ИИ» — LLM-ответ клиенту с учётом «Декларации» + истории WhatsApp; кладём в поле.
+  document.addEventListener('click', async e => {
+    const b = e.target.closest('button[data-ai-phone]'); if (!b) return;
+    const ta = $('#td-reply'); b.disabled = true; const old = b.textContent; b.textContent = 'Готовлю…';
+    try {
+      const r = await postJSON(api('/whatsapp-draft'), { phone: b.dataset.aiPhone });
+      if (r && r.ok) { if (ta) ta.value = r.draft || ''; toast(`Черновик готов${r.context && r.context.status ? ' · ' + r.context.status : ''}`); }
+      else toast('Не удалось' + (r && r.reason ? ' (' + r.reason + ')' : ''));
+    } catch (_) { toast('Ошибка запроса'); }
+    finally { b.disabled = false; b.textContent = old; }
+  });
+  // «Скопировать» the (editable) agent reply from a textarea/element.
+  document.addEventListener('click', e => {
+    const b = e.target.closest('button[data-copy-el]'); if (!b) return;
+    const el = document.getElementById(b.dataset.copyEl); const txt = el ? (el.value || el.textContent || '') : '';
+    if (navigator.clipboard) navigator.clipboard.writeText(txt).then(() => toast('Скопировано')).catch(() => toast('Не удалось скопировать'));
+    else toast('Копирование недоступно');
+  });
+  // «Отправить клиенту» — operator-confirmed, safety-gated send via /api/whatsapp/send.
+  document.addEventListener('click', async e => {
+    const b = e.target.closest('button[data-send-phone]'); if (!b) return;
+    const ta = $('#td-reply'); const body = ta ? ta.value.trim() : '';
+    if (!body) { toast('Пустой ответ'); return; }
+    const phone = b.dataset.sendPhone;
+    if (!confirm(`Отправить это сообщение клиенту ${phone}?`)) return;
+    b.disabled = true;
+    let r; try { r = await postJSON('/api/whatsapp/send', { to: phone, body }); } catch (_) { toast('Ошибка отправки'); b.disabled = false; return; }
+    if (r && r.ok) { toast('Отправлено клиенту ✓'); postJSON(api('/thread/seen'), { phone, action: 'seen' }).catch(() => {}); loadTasks(); }
+    else {
+      const why = r && r.reason === 'safety_blocked'
+        ? `анти-бан${r.wait_ms ? `, подождите ${Math.ceil(r.wait_ms / 1000)}с` : ''}`
+        : (r && (r.reason || r.message)) || 'не отправлено';
+      toast('Не отправлено: ' + why); b.disabled = false;
+    }
+  });
+  // Поиск + фильтры (клиентская фильтрация кэша задач).
+  $('#tasks-search').addEventListener('input', e => { taskSearch = (e.target.value || '').trim().toLowerCase(); renderTaskList(); });
+  $('#tasks-filters').addEventListener('click', e => { const b = e.target.closest('button[data-filter]'); if (!b) return; taskFilter = b.dataset.filter; renderTaskFilters(); renderTaskList(); });
+  // Авто-обновление списка каждые 30с (только на экране «Задачи», деталь не трогаем).
+  setInterval(() => { if (current === 'tasks' && document.visibilityState !== 'hidden') loadTasks().catch(() => {}); }, 30000);
+  function openTask(ds) {
+    if (ds.kind === 'whatsapp_reply' && ds.phone) { openThread(ds.phone); return; }
+    const pane = $('#task-detail');
+    if (ds.kind === 'lab_email') {
+      pane.innerHTML = `<div class="td"><div class="td-head"><b>Письмо лаборатории</b></div>
+        <p class="muted">Проверьте черновик письма и отправьте вручную — система не отправляет сама.</p>
+        <button class="btn-approve" data-goto="drafts">Открыть в «Черновиках»</button></div>`;
+    } else if (ds.kind === 'new_application') {
+      const t = taskCache.find(x => x.kind === 'new_application' && String(x.sheet_row) === String(ds.row)) || {};
+      const dateRu = t.submitted_at ? new Date(t.submitted_at).toLocaleString('ru-RU') : 'дата неизвестна';
+      const staleWarn = t.stale
+        ? `<div class="td-info" style="background:#fef2f2;border-color:#fecaca;color:#991b1b">⚠ Заявке ${esc(String(t.age_days))} дн. — возможно, клиент уже отказался. Стоит уточнить актуальность перед просчётом.</div>`
+        : '';
+      pane.innerHTML = `<div class="td"><div class="td-head"><b>Новая заявка без просчёта</b></div>
+        <div class="td-info"><b>Заявка создана:</b> ${esc(dateRu)}${t.age_days != null ? ` · ${esc(String(t.age_days))} дн. назад` : ''}</div>
+        ${staleWarn}
+        <p class="muted">Строка формы: ${esc(ds.row || '—')}. Подготовьте макет и расчёт в очереди заявок.</p>
+        <button class="btn-approve" data-goto="dashboard">Открыть очередь заявок</button></div>`;
+    }
+  }
+  $('#tasks-list').addEventListener('click', e => { const row = e.target.closest('.tk'); if (row) openTask(row.dataset); });
+  document.addEventListener('click', async e => {
+    const g = e.target.closest('[data-goto]'); if (g) { show(g.dataset.goto); return; }
+    const done = e.target.closest('[data-done-phone]');
+    if (done) { await postJSON(api('/thread/seen'), { phone: done.dataset.donePhone, action: 'done' }); toast('Отмечено «Готово»'); $('#task-detail').innerHTML = '<div class="td-empty">Выберите задачу слева.</div>'; loadTasks(); return; }
+    const sn = e.target.closest('[data-snooze-phone]');
+    if (sn) { await postJSON(api('/thread/seen'), { phone: sn.dataset.snoozePhone, action: 'snooze' }); toast('Отложено на 24 ч'); loadTasks(); return; }
   });
 
   // ── 1. Главная: очередь внимания (критические проблемы + приоритетная очередь) ──
@@ -273,6 +465,43 @@
     refreshChatSelector();
   }
 
+  // ── Письма без ответа (живой список неотвеченных цепочек Gmail) ───────────
+  function emailCard(t) {
+    const date = t.date ? new Date(t.date).toLocaleString('ru-RU') : '';
+    const files = (t.attachments || []).length
+      ? `<div class="reason">📎 Файл: ${t.attachments.map(esc).join(', ')}</div>` : '';
+    return `<div class="item" data-thread="${esc(t.thread_id)}">
+      <div class="head"><span class="title">✉️ ${esc(t.subject || '(без темы)')}</span><span class="sub">${esc(t.from || '')}${date ? ' · ' + esc(date) : ''}${t.message_count ? ' · сообщений: ' + t.message_count : ''}</span></div>
+      <div class="body">${esc(t.text || '(без текста)')}</div>
+      ${files}
+      <div class="actions"><button class="btn-approve" data-draft-thread="${esc(t.thread_id)}">✍ Подготовить ответ</button></div>
+      <div class="email-draft"></div></div>`;
+  }
+  // «Подготовить ответ» → LLM-черновик по цепочке + БЗ; показываем в редактируемом поле.
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-draft-thread]'); if (!b) return;
+    const card = b.closest('.item'); const box = card && $('.email-draft', card);
+    b.disabled = true; const old = b.textContent; b.textContent = 'Готовлю…';
+    try {
+      const r = await postJSON(api(`/emails/${encodeURIComponent(b.dataset.draftThread)}/draft`), {});
+      if (r && r.ok) {
+        box.innerHTML = `<div class="reason">Черновик ответа (${esc(r.provider || '')}) — проверьте и отправьте из почты:</div>
+          <textarea class="draft-edit" rows="8" style="width:100%">${esc(r.draft || '')}</textarea>`;
+      } else {
+        box.innerHTML = `<div class="empty">Не удалось подготовить${r && r.reason ? ' (' + esc(r.reason) + ')' : ''}.</div>`;
+      }
+    } catch (_) { box.innerHTML = '<div class="empty">Ошибка запроса.</div>'; }
+    finally { b.disabled = false; b.textContent = old; }
+  });
+  async function loadEmails() {
+    const el = $('#emails-list');
+    el.innerHTML = '<div class="empty">Загрузка писем…</div>';
+    const d = await getJSON(api('/emails-unanswered'));
+    if (!d || !d.ok) { el.innerHTML = `<div class="empty">Gmail недоступен${d && d.reason ? ' (' + esc(d.reason) + ')' : ''}.</div>`; return; }
+    const th = d.threads || [];
+    el.innerHTML = th.length ? th.map(emailCard).join('') : '<div class="empty">Неотвеченных писем нет — на всё ответили. ✅</div>';
+  }
+
   // ── 3. Черновики ────────────────────────────────────────────────────────
   const GROUP_RU = { replies: 'Ответы клиентам', calculations: 'Расчёты', emails: 'Письма лабораториям', status_changes: 'Изменения статусов' };
   async function loadDrafts() {
@@ -333,9 +562,10 @@
     $('#chat-ctx').textContent = chatItem ? `Задача: ${(found && found.title) || id}` : 'Задача не выбрана.';
   });
   async function ask(question) {
-    if (!chatItem) { toast('Сначала выберите задачу'); return; }
     appendMsg('you', question);
-    const r = await postJSON(api('/chat'), { type: chatItem.type, id: chatItem.id, question });
+    // Задача необязательна: без неё — общий вопрос по работе к ИИ-помощнику.
+    const payload = chatItem ? { type: chatItem.type, id: chatItem.id, question } : { question };
+    const r = await postJSON(api('/chat'), payload);
     const ev = (r.evidence || []).length ? `<ul class="ev">${r.evidence.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
     appendMsg('agent', esc(r.answer || '(нет ответа)') + ev, true);
   }
@@ -404,6 +634,65 @@
     toast(r.user ? 'Готово' : (r.message || 'Ошибка')); loadUsers();
   });
 
+  // ── Новые номера из заявок (холодный контакт — гейт + шаблон) ───────────
+  async function loadFirstContact() {
+    const el = $('#fc-list');
+    let d; try { d = await getJSON('/api/first-contact'); } catch (_) { el.innerHTML = offline(); return; }
+    const ps = d.proposals || [];
+    el.innerHTML = ps.length ? ps.map(p => {
+      const ev = (p.evidence || []).length ? `<ul class="evidence">${p.evidence.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
+      const sent = p.state === 'sent';
+      const failed = p.state === 'approved' && p.send_result && p.send_result.ok === false;
+      const acts = sent ? '<span class="muted">отправлено ✓</span>'
+        : `<button class="btn-approve" data-fc="${esc(p.id)}" data-dec="approve">Подтвердить и отправить</button>
+           <button class="btn-reject" data-fc="${esc(p.id)}" data-dec="reject">Отклонить</button>`;
+      const isChat = p.source === 'chat_interest';
+      const tag = isChat ? `<span class="badge">лид из чата${p.context ? ' · ' + esc(p.context) : ''}</span>` : '';
+      const body = isChat
+        ? `<div class="body">${esc(p.proposed_text || '')}</div>`
+        : `<div class="muted">Шаблон: ${esc(p.template_name || '')}</div>`;
+      return `<div class="item">
+        <div class="head"><span class="title">${esc(p.client_name || 'Без названия')}</span>${tag}<span class="sub">${esc(p.to_phone || '')}</span></div>
+        <div class="reason">${esc(p.reason)}</div>${ev}
+        ${body}${failed ? '<div class="muted">⚠ отправка не удалась — проверьте номер/канал</div>' : ''}
+        <div class="actions">${acts}</div>
+      </div>`;
+    }).join('') : '<div class="empty">Новых лидов нет. Сюда попадают номера из заявок и люди, спросившие про сертификаты/декларации в чатах.</div>';
+  }
+  $('#fc-scan').addEventListener('click', async () => {
+    toast('Сканирую заявки…');
+    let r; try { r = await postJSON('/api/first-contact/scan', {}); } catch (_) { toast('Ошибка сканирования'); return; }
+    toast(`Найдено новых: ${r.generated || 0} (пропущено ${r.skipped || 0})`);
+    loadFirstContact();
+  });
+  document.addEventListener('click', async e => {
+    const b = e.target.closest('button[data-fc]'); if (!b) return;
+    const r = await postJSON(`/api/first-contact/${b.dataset.fc}/decision`, { decision: b.dataset.dec });
+    if (b.dataset.dec === 'approve') toast(r.state === 'sent' ? 'Отправлено клиенту' : 'Не удалось отправить — проверьте шаблон');
+    else toast('Отклонено');
+    loadFirstContact();
+  });
+
+  // ── Статистика операторов (счётчик отправленных ответов) ────────────────
+  const INTENT_RU = { payment_made: 'оплата', price_question: 'цена', timeline_question: 'сроки', docs_question: 'документы', service_question: 'услуга', application_help: 'помощь с заявкой', greeting: 'приветствие', unknown: 'прочее' };
+  const CAT_RU = { mpstats: 'MPStats', wildbox: 'WildBox', sgr: 'СГР', refusal_letter: 'отказное письмо', certificate: 'сертификат', declaration: 'декларация', unknown: 'прочее' };
+  function breakdown(map, dict) {
+    const keys = Object.keys(map || {}).sort((a, b) => map[b] - map[a]);
+    return keys.length ? keys.map(k => `${esc(dict[k] || k)}: ${map[k]}`).join(', ') : '—';
+  }
+  async function loadStats() {
+    const el = $('#stats-body');
+    const from = $('#stats-from').value, to = $('#stats-to').value;
+    const qs = []; if (from) qs.push('from=' + from); if (to) qs.push('to=' + to + 'T23:59:59');
+    let d; try { d = await getJSON('/api/stats/operators' + (qs.length ? '?' + qs.join('&') : '')); } catch (_) { el.innerHTML = offline(); return; }
+    const ops = d.operators || [];
+    if (!ops.length) { el.innerHTML = '<div class="empty">Пока нет отправленных ответов за выбранный период.</div>'; return; }
+    el.innerHTML = `<table class="audit"><thead><tr><th>Сотрудник</th><th>Ответов</th><th>Типы вопросов</th><th>Темы</th></tr></thead><tbody>` +
+      ops.map(o => `<tr><td>${esc(o.display_name)}</td><td><b>${o.total}</b></td><td>${breakdown(o.by_intent, INTENT_RU)}</td><td>${breakdown(o.by_category, CAT_RU)}</td></tr>`).join('') +
+      `</tbody></table><div class="muted">Всего ответов: ${(d.totals && d.totals.total) || 0}</div>`;
+  }
+  $('#stats-apply').addEventListener('click', loadStats);
+
   // ── инициализация: проверка входа ───────────────────────────────────────
   (async function init() {
     let res;
@@ -413,6 +702,6 @@
     $('#whoami').textContent = `${me.display_name} · ${me.role === 'administrator' ? 'Администратор' : 'Оператор'}`;
     // скрыть админ-элементы для оператора
     if (me.role !== 'administrator') $$('[data-admin="1"]').forEach(el => el.style.display = 'none');
-    show('dashboard');
+    show('tasks');
   })();
 })();
