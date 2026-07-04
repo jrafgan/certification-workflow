@@ -1,0 +1,37 @@
+# wa-web — UNOFFICIAL WhatsApp Web bridge (whatsapp-web.js), TEMPORARY channel (ban risk).
+# Runs src/wa-web-server.js: receives → ingest → panel inbox, + internal /send HTTP for the
+# panel. whatsapp-web.js drives a headless Chromium via Puppeteer, so this image ships the
+# distro Chromium and points Puppeteer at it. Separate from the API image so Chromium isn't
+# in the backend container. Opt-in compose profile (needs a one-time QR scan from the logs).
+FROM node:20-bookworm-slim
+
+# Chromium + the fonts/libs it needs for headless WhatsApp Web.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      chromium \
+      fonts-liberation fonts-noto-color-emoji \
+      ca-certificates curl tini \
+  && rm -rf /var/lib/apt/lists/*
+
+# Do NOT let puppeteer download its own Chromium during npm ci — use the distro one.
+ENV PUPPETEER_SKIP_DOWNLOAD=1 \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+WORKDIR /app/backend
+
+COPY backend/package*.json ./
+# whatsapp-web.js + qrcode-terminal are intentionally NOT in package.json (kept out of the
+# backend/API image). They are installed ONLY here, so this wa-web image can run both the live
+# bridge (src/wa-web-server.js) and the history import (scripts/wa-web-history-import.js).
+# Pinned to the versions verified locally. Puppeteer uses the distro Chromium (SKIP_DOWNLOAD).
+RUN npm ci --omit=dev \
+ && npm i --no-save whatsapp-web.js@1.34.7 qrcode-terminal@0.12.0 \
+ && npm cache clean --force
+
+COPY backend/ ./
+
+ENV NODE_ENV=production
+
+# First boot prints a QR to the container logs — scan it once with 507391773
+# (WhatsApp → Связанные устройства). The session persists in the mounted volume.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "src/wa-web-server.js"]
