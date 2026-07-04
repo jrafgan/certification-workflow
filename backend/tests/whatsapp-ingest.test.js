@@ -8,7 +8,7 @@
 // Run: node tests/whatsapp-ingest.test.js  (or: npm run test:whatsapp-ingest)
 
 const assert = require('assert');
-const { mapIncomingMessage, phoneFromJid } = require('../src/services/whatsappIngestService');
+const { mapIncomingMessage, phoneFromJid, computeAddressing } = require('../src/services/whatsappIngestService');
 
 let pass = 0, fail = 0; const failures = [];
 function test(name, fn) {
@@ -62,6 +62,47 @@ test('missing fields degrade safely', () => {
   assert.strictEqual(m.phone_key, '');
   assert.strictEqual(m.body, '');
   assert.strictEqual(m.sent_at, undefined);
+});
+
+// ── Addressing (group vs direct) ──────────────────────────────────────────────
+const ME = ['507391773']; // operator match key (996507391773 → last 9)
+
+test('direct message → addressed_me:true, reason direct', () => {
+  const a = computeAddressing({ is_group: false, body: 'привет' }, { meKeys: ME });
+  assert.strictEqual(a.addressed_me, true);
+  assert.strictEqual(a.addressed_reason, 'direct');
+});
+
+test('group + @mention of operator → mention', () => {
+  const a = computeAddressing({ is_group: true, mentioned_jids: ['996507391773', '996111222333'], body: 'вопрос' }, { meKeys: ME });
+  assert.deepStrictEqual([a.addressed_me, a.addressed_reason], [true, 'mention']);
+});
+
+test('group + reply to operator → reply', () => {
+  const a = computeAddressing({ is_group: true, quoted_author: '996507391773', body: 'да' }, { meKeys: ME });
+  assert.deepStrictEqual([a.addressed_me, a.addressed_reason], [true, 'reply']);
+});
+
+test('group + certification keyword (interest) → keyword', () => {
+  const detect = (t) => ({ interested: /деклараци/i.test(t) });
+  const a = computeAddressing({ is_group: true, body: 'сколько стоит декларация?' }, { meKeys: ME, detect });
+  assert.deepStrictEqual([a.addressed_me, a.addressed_reason], [true, 'keyword']);
+});
+
+test('group chatter not addressed → addressed_me:false', () => {
+  const detect = () => ({ interested: false });
+  const a = computeAddressing({ is_group: true, mentioned_jids: ['996111222333'], quoted_author: '996444', body: 'всем привет' }, { meKeys: ME, detect });
+  assert.deepStrictEqual([a.addressed_me, a.addressed_reason], [false, null]);
+});
+
+test('mapIncomingMessage carries group fields + addressing', () => {
+  const raw = { provider: 'gowa', id: 'G9', from: '996555444333@s.whatsapp.net', chat_id: '120@g.us', is_group: true, group_subject: 'Поставщики', mentioned_jids: ['996507391773'], body: 'кто по СГР?' };
+  const m = mapIncomingMessage(raw, null, computeAddressing(raw, { meKeys: ME }));
+  assert.strictEqual(m.is_group, true);
+  assert.strictEqual(m.chat_id, '120@g.us');
+  assert.strictEqual(m.group_subject, 'Поставщики');
+  assert.strictEqual(m.addressed_me, true);
+  assert.strictEqual(m.addressed_reason, 'mention');
 });
 
 console.log(`\nWhatsApp ingest mapping: ${pass} passed, ${fail} failed`);

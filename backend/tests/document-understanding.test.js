@@ -14,10 +14,14 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const du = require('../src/services/documentUnderstandingService');
 
-let pass = 0, fail = 0, skip = 0; const failures = [];
+let pass = 0, fail = 0, skip = 0; const failures = []; const pending = []; let realPdfDir = null;
 function test(name, fn) {
-  try { fn(); pass++; console.log(`  PASS  ${name}`); }
-  catch (err) { fail++; failures.push({ name, err }); console.log(`  FAIL  ${name}\n        ${err.message}`); }
+  const p = (async () => {
+    try { await fn(); pass++; console.log(`  PASS  ${name}`); }
+    catch (err) { fail++; failures.push({ name, err }); console.log(`  FAIL  ${name}\n        ${err.message}`); }
+  })();
+  pending.push(p);
+  return p;
 }
 
 const RECEIPT = [
@@ -94,27 +98,27 @@ test('empty / non-document text → NONE', () => {
 
 console.log('\n[extractText routing]');
 
-test('PDF routes to the pdf engine (injected)', () => {
-  const r = du.extractText({ media_ref: '/x/file.pdf', mime_type: 'application/pdf' }, { pdfText: () => RECEIPT });
+test('PDF routes to the pdf engine (injected)', async () => {
+  const r = await du.extractText({ media_ref: '/x/file.pdf', mime_type: 'application/pdf' }, { pdfText: () => RECEIPT });
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.method, 'pdftotext');
 });
 
-test('image routes to OCR (injected)', () => {
-  const r = du.extractText({ media_ref: '/x/scan.jpg', mime_type: 'image/jpeg' }, { ocr: () => 'ИНН 01234567890123' });
+test('image routes to OCR (injected)', async () => {
+  const r = await du.extractText({ media_ref: '/x/scan.jpg', mime_type: 'image/jpeg' }, { ocr: () => 'ИНН 01234567890123' });
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.method, 'ocr');
 });
 
-test('image with NO OCR engine → ocr_not_available (honest)', () => {
-  const r = du.extractText({ media_ref: '/x/scan.png', mime_type: 'image/png' }, { /* no ocr, no real file */ });
+test('image with NO OCR engine → ocr_not_available (honest)', async () => {
+  const r = await du.extractText({ media_ref: '/x/scan.png', mime_type: 'image/png' }, { /* no ocr, no real file */ });
   assert.strictEqual(r.ok, false);
   // either ocr_not_available (no tesseract) or file_not_found if a real engine exists
   assert.ok(['ocr_not_available', 'file_not_found'].includes(r.reason));
 });
 
-test('understandDocument end-to-end with injected pdf engine', () => {
-  const r = du.understandDocument({ media_ref: '/x/r.pdf', mime_type: 'application/pdf', file_name: 'чек.pdf' }, { pdfText: () => RECEIPT });
+test('understandDocument end-to-end with injected pdf engine', async () => {
+  const r = await du.understandDocument({ media_ref: '/x/r.pdf', mime_type: 'application/pdf', file_name: 'чек.pdf' }, { pdfText: () => RECEIPT });
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.fields.payment_amount.value, 21000);
   assert.strictEqual(r.fields.inn.value, '01234567890123');
@@ -134,18 +138,21 @@ function libreofficeAvailable() { try { execFileSync('soffice', ['--version'], {
     // Convert the UTF-8 (Cyrillic) text to a real PDF, then read it back through the engine.
     execFileSync('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', dir, txt], { stdio: 'ignore', timeout: 60000 });
     const pdf = path.join(dir, 'receipt.pdf');
-    test('real PDF → pdftotext → fields extracted (Cyrillic round-trip)', () => {
+    test('real PDF → pdftotext → fields extracted (Cyrillic round-trip)', async () => {
       assert.ok(fs.existsSync(pdf), 'pdf generated');
-      const r = du.understandDocument({ media_ref: pdf, mime_type: 'application/pdf', file_name: 'receipt.pdf' });
+      const r = await du.understandDocument({ media_ref: pdf, mime_type: 'application/pdf', file_name: 'receipt.pdf' });
       assert.strictEqual(r.ok, true);
       assert.strictEqual(r.method, 'pdftotext');
       assert.strictEqual(r.fields.inn.value, '01234567890123');
       assert.strictEqual(r.fields.payment_amount.value, 21000);
     });
   } catch (e) { skip++; console.log('  SKIP  real pdftotext —', e.message.split('\n')[0]); }
-  finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  finally { /* dir cleaned after pending tests resolve */ realPdfDir = dir; }
 })();
 
-console.log(`\nRESULT: ${pass} passed, ${fail} failed, ${skip} skipped`);
-if (fail) { failures.forEach(f => console.log(`  - ${f.name}: ${f.err.message}`)); process.exit(1); }
-process.exit(0);
+Promise.all(pending).then(() => {
+  if (realPdfDir) { try { fs.rmSync(realPdfDir, { recursive: true, force: true }); } catch (_) { /* ignore */ } }
+  console.log(`\nRESULT: ${pass} passed, ${fail} failed, ${skip} skipped`);
+  if (fail) { failures.forEach(f => console.log(`  - ${f.name}: ${f.err.message}`)); process.exit(1); }
+  process.exit(0);
+});

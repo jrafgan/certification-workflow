@@ -71,13 +71,13 @@ test('AGE drives DS/SS; knit/sew disagreement does NOT lower confidence', () => 
   assert.strictEqual(r.fabric.signals_agree, false);
 });
 
-test('row 570 full classify: knit, 3 comp groups, 3 protocols, 3 samples, Дастан', () => {
+test('row 570 full classify: knit, 3 comp groups, 3 protocols, 6 samples, lab уточняется', () => {
   const r = c.classify({ age: 'Женская взрослая', items_text: ROW570 });
   assert.strictEqual(r.category, 'knitwear');
   assert.strictEqual(r.composition_group_count, 3);
   assert.strictEqual(r.estimated_protocol_count, 3);
-  assert.strictEqual(r.samples_required, 3);     // ДС: 3 составы × 1
-  assert.strictEqual(r.laboratory, 'Дастан');
+  assert.strictEqual(r.samples_required, 6);     // ДС: 3 составы × 2 (всегда 2/состав)
+  assert.strictEqual(r.laboratory, 'уточняется');
 });
 
 test('child application → СС / Бермет / 2 samples per composition', () => {
@@ -87,12 +87,12 @@ test('child application → СС / Бермет / 2 samples per composition', ()
   assert.strictEqual(r.samples_required, 2);     // СС: 1 состав × 2
 });
 
-test('KB worked example reproduces: adult knit, 1 comp, ДС, 1 sample, HIGH', () => {
+test('KB worked example reproduces: adult knit, 1 comp, ДС, 2 samples, HIGH', () => {
   const r = c.classify({ age: 'Женская взрослая', items_text: 'Домашний костюм трикотаж - 95% полиэстер, 5% эластан, 6104320000' });
   assert.strictEqual(r.doc_type, 'ДС');
   assert.strictEqual(r.composition_group_count, 1);
   assert.strictEqual(r.estimated_protocol_count, 1);
-  assert.strictEqual(r.samples_required, 1);
+  assert.strictEqual(r.samples_required, 2);     // всегда 2/состав
   assert.strictEqual(r.determination.confidence_band, 'HIGH');
 });
 

@@ -15,12 +15,11 @@ function test(name, fn) {
 }
 
 (async () => {
-  console.log('\n[routing — ДС→Дастан, СС→Бермет (from config)]');
-  await test('ДС → Дастан Акматов <standartpro98@gmail.com>', () => {
+  console.log('\n[routing — ДС: получатель не задан (Дастану не пишем), СС→Бермет]');
+  await test('ДС → recipient unset by default (no Dastan)', () => {
     const r = le.routeLab('ДС');
-    assert.strictEqual(r.lab, 'Дастан');
-    assert.strictEqual(r.email, 'standartpro98@gmail.com');
-    assert.strictEqual(r.recipient_name, 'Дастан Акматов');
+    assert.strictEqual(r.email, '');           // unknown variant → получателя нет, пока не уточнили документы на цех
+    assert.strictEqual(r.recipient_name, '');
   });
   await test('СС → Kyrgyz Test - Бермет <mng-1@kyrgyz-test.kg>', () => {
     const r = le.routeLab('СС');
@@ -38,11 +37,14 @@ function test(name, fn) {
   });
 
   console.log('\n[buildLabEmail — gated draft]');
-  await test('builds ДС draft to Дастан, never sends', () => {
+  await test('builds ДС draft but flags missing recipient, never sends', () => {
     const e = le.buildLabEmail({ clientName: 'ИП Иванов', docType: 'ДС', piCount: 3, additionalPi: 2, mockupFileName: 'макет_ИП Иванов.docx', attachmentFileName: 'приложение_ИП Иванов.docx', priorCount: 0 });
     assert.strictEqual(e.ok, true);
-    assert.strictEqual(e.to_email, 'standartpro98@gmail.com');
-    assert.strictEqual(e.to, 'Дастан Акматов <standartpro98@gmail.com>');
+    assert.strictEqual(e.to_email, null);              // Дастану не пишем; новая почта ещё не задана
+    assert.strictEqual(e.to, null);                    // нет битого "<>"
+    assert.strictEqual(e.recipient_configured, false);
+    assert.ok(e.recipient_warning && /швейный цех/.test(e.recipient_warning));  // ДС: сначала уточнить документы на цех
+    assert.strictEqual(e.declaration_variant, 'unknown');
     assert.strictEqual(e.subject, 'ИП Иванов');
     assert.strictEqual(e.auto_send, false);
     assert.ok(e.attachments.some(a => a.kind === 'mockup'));

@@ -29,37 +29,57 @@ test('countCompositions dedupes and floors at 1', () => {
   assert.strictEqual(pi.countCompositions(undefined), 1);
 });
 
-test('ДС, 1 состав → base 15000, no additional, 1 sample', () => {
+test('ДС без флага цех → default no_workshop: base 18000, 3 года, needs clarification', () => {
   const r = pi.computePi({ doc_type: 'ДС', compositions: ['хлопок'] });
   assert.strictEqual(r.pi_count, 1);
   assert.strictEqual(r.additional_pi, 0);
-  assert.strictEqual(r.total_estimate, 15000);
-  assert.strictEqual(r.samples_required, 1);
-  assert.strictEqual(r.laboratory, 'Дастан');
-  assert.strictEqual(r.is_minimum, true);
+  assert.strictEqual(r.total_estimate, 18000);
+  assert.strictEqual(r.validity, '3 года');
+  assert.strictEqual(r.declaration_variant, 'no_workshop');
+  assert.strictEqual(r.needs_workshop_clarification, true);
+  assert.strictEqual(r.samples_required, 2);              // всегда 2/состав
+  assert.strictEqual(r.laboratory, 'уточняется');
   assert.strictEqual(r.needs_operator_confirmation, true);
 });
 
-test('ДС, 3 составов → 15000 + 2×7000 = 29000, 3 samples', () => {
-  const r = pi.computePi({ doc_type: 'ДС', compositions: ['хлопок', 'полиэстер', 'шерсть'] });
-  assert.strictEqual(r.pi_count, 3);
-  assert.strictEqual(r.additional_pi, 2);
-  assert.strictEqual(r.additional_cost, 14000);
-  assert.strictEqual(r.total_estimate, 29000);
-  assert.strictEqual(r.samples_required, 3);
+test('ДС есть документы на цех → base 17000, 1 год, 2 образца/состав', () => {
+  const r = pi.computePi({ doc_type: 'ДС', compositions: ['хлопок'], has_workshop_docs: true });
+  assert.strictEqual(r.total_estimate, 17000);
+  assert.strictEqual(r.validity, '1 год');
+  assert.strictEqual(r.declaration_variant, 'with_workshop');
+  assert.strictEqual(r.needs_workshop_clarification, false);
+  assert.strictEqual(r.samples_required, 2);              // with_workshop = 2/состав
+  assert.strictEqual(r.samples_per_composition, 2);
 });
 
-test('СС, 2 составов → 35000 + 1×9000 = 44000, 4 samples (2/состав)', () => {
+test('ДС нет документов на цех, 3 состава → 18000 + 2×9000 = 36000, 6 samples (2/состав)', () => {
+  const r = pi.computePi({ doc_type: 'ДС', compositions: ['хлопок', 'полиэстер', 'шерсть'], has_workshop_docs: false });
+  assert.strictEqual(r.pi_count, 3);
+  assert.strictEqual(r.additional_pi, 2);
+  assert.strictEqual(r.additional_cost, 18000);           // no_workshop доп-ПИ = 9000
+  assert.strictEqual(r.total_estimate, 36000);
+  assert.strictEqual(r.samples_required, 6);              // всегда 2/состав × 3
+});
+
+test('СС местные, 2 составов → 35000 + 1×10000 = 45000, 4 samples (2/состав)', () => {
   const r = pi.computePi({ doc_type: 'СС', compositions: ['хлопок', 'полиэстер'] });
-  assert.strictEqual(r.total_estimate, 44000);
+  assert.strictEqual(r.total_estimate, 45000);
   assert.strictEqual(r.samples_required, 4);
   assert.strictEqual(r.laboratory, 'Бермет');
+  assert.strictEqual(r.foreign_entity, false);
+});
+
+test('СС зарубежное юрлицо, 2 составов → 50000 + 1×13000 = 63000', () => {
+  const r = pi.computePi({ doc_type: 'СС', compositions: ['хлопок', 'полиэстер'], foreign_entity: true });
+  assert.strictEqual(r.total_estimate, 63000);
+  assert.strictEqual(r.additional_pi_unit, 13000);
+  assert.strictEqual(r.foreign_entity, true);
 });
 
 test('explicit pi_count overrides composition counting', () => {
-  const r = pi.computePi({ doc_type: 'ДС', pi_count: 4 });
+  const r = pi.computePi({ doc_type: 'ДС', pi_count: 4, has_workshop_docs: false });
   assert.strictEqual(r.pi_count, 4);
-  assert.strictEqual(r.total_estimate, 15000 + 3 * 7000);
+  assert.strictEqual(r.total_estimate, 18000 + 3 * 9000);  // no_workshop доп-ПИ = 9000
   assert.strictEqual(r.confidence, 'MEDIUM');
 });
 

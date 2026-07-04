@@ -45,7 +45,7 @@ console.log('\n[END-TO-END: Новая форма row → DOCX → download]');
 const application = mapper.mapRow(HEADER, ROW, { docType: null });
 const result = gen.generateFromApplication(application, { baseDir: BASE, templateDir: TEMPLATE_DIR });
 
-test('1. classification: adult / knitwear / ДС / 3 comp groups / 3 protocols / 3 samples / Дастан', () => {
+test('1. classification: adult / knitwear / ДС / 3 comp groups / 3 protocols / 6 samples / lab уточняется', () => {
   assert.strictEqual(result.generated, true);
   const c = result.classification;
   assert.strictEqual(c.age, 'adult');
@@ -53,8 +53,8 @@ test('1. classification: adult / knitwear / ДС / 3 comp groups / 3 protocols /
   assert.strictEqual(c.doc_type, 'ДС');
   assert.strictEqual(c.composition_groups, 3);
   assert.strictEqual(c.protocol_groups, 3);
-  assert.strictEqual(c.samples_required, 3);
-  assert.strictEqual(c.laboratory, 'Дастан');
+  assert.strictEqual(c.samples_required, 6);
+  assert.strictEqual(c.laboratory, 'уточняется');
 });
 
 test('2. selected template = Макет_ДС.docx', () => {

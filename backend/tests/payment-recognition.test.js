@@ -82,8 +82,8 @@ test('full chain: matched application + payment + PI → New Order Proposal', ()
   const pkg = draft.buildCreateDeclarationDraft(application, { payment, pi, document_type: 'ДС' });
   assert.strictEqual(pkg.generated, true);
   assert.strictEqual(pkg.proposed_data.pi_count, 2);
-  assert.strictEqual(pkg.proposed_data.estimated_cost, 22000); // 15000 + 1×7000
-  assert.strictEqual(pkg.proposed_data.laboratory, 'Дастан');
+  assert.strictEqual(pkg.proposed_data.estimated_cost, 27000); // ДС default no_workshop: 18000 + 1×9000
+  assert.strictEqual(pkg.proposed_data.laboratory, 'уточняется');
   assert.ok(pkg.evidence.some(e => e.kind === 'pi'));
   assert.ok(pkg.evidence.some(e => e.kind === 'payment'));
 });

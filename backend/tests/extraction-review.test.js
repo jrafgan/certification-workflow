@@ -9,10 +9,14 @@
 const assert = require('assert');
 const svc = require('../src/services/extractionReviewService');
 
-let pass = 0, fail = 0; const failures = [];
+let pass = 0, fail = 0; const failures = []; const pending = [];
 function test(name, fn) {
-  try { fn(); pass++; console.log(`  PASS  ${name}`); }
-  catch (err) { fail++; failures.push({ name, err }); console.log(`  FAIL  ${name}\n        ${err.message}`); }
+  const p = (async () => {
+    try { await fn(); pass++; console.log(`  PASS  ${name}`); }
+    catch (err) { fail++; failures.push({ name, err }); console.log(`  FAIL  ${name}\n        ${err.message}`); }
+  })();
+  pending.push(p);
+  return p;
 }
 
 const RECEIPT = [
@@ -39,8 +43,8 @@ const REGISTRATION = [
 ].join('\n');
 
 console.log('\n[buildReviewPackage — receipt]');
-test('receipt: surfaces only receipt-relevant fields, scores them', () => {
-  const r = svc.buildReviewPackage(
+test('receipt: surfaces only receipt-relevant fields, scores them', async () => {
+  const r = await svc.buildReviewPackage(
     { media_ref: '/x/check.jpg', mime_type: 'image/jpeg', file_name: 'чек.jpg' },
     { ocr: () => RECEIPT },
   );
@@ -57,8 +61,8 @@ test('receipt: surfaces only receipt-relevant fields, scores them', () => {
 });
 
 console.log('\n[buildReviewPackage — declaration]');
-test('declaration: doc number + issue/expiry dates + applicant', () => {
-  const r = svc.buildReviewPackage(
+test('declaration: doc number + issue/expiry dates + applicant', async () => {
+  const r = await svc.buildReviewPackage(
     { media_ref: '/x/ds.pdf', mime_type: 'application/pdf', file_name: 'декларация.pdf' },
     { pdfText: () => DECLARATION },
   );
@@ -71,8 +75,8 @@ test('declaration: doc number + issue/expiry dates + applicant', () => {
 });
 
 console.log('\n[buildReviewPackage — registration]');
-test('registration: legal entity + ИНН + registration id', () => {
-  const r = svc.buildReviewPackage(
+test('registration: legal entity + ИНН + registration id', async () => {
+  const r = await svc.buildReviewPackage(
     { media_ref: '/x/reg.jpg', mime_type: 'image/jpeg', file_name: 'свидетельство.jpg' },
     { ocr: () => REGISTRATION },
   );
@@ -83,8 +87,8 @@ test('registration: legal entity + ИНН + registration id', () => {
 });
 
 console.log('\n[scoring + impact]');
-test('partial extraction → MEDIUM/LOW band with missing list', () => {
-  const r = svc.buildReviewPackage(
+test('partial extraction → MEDIUM/LOW band with missing list', async () => {
+  const r = await svc.buildReviewPackage(
     { media_ref: '/x/p.jpg', mime_type: 'image/jpeg', file_name: 'чек.jpg' },
     { ocr: () => 'Квитанция об оплате\nИтого к оплате: 5000 сом' }, // only amount of 5 receipt fields
   );
@@ -93,14 +97,14 @@ test('partial extraction → MEDIUM/LOW band with missing list', () => {
   assert.ok(r.missing.some(m => m.field === 'payer'));
 });
 
-test('output-only contract: impact never promises a write', () => {
-  const r = svc.buildReviewPackage({ media_ref: '/x/r.jpg', mime_type: 'image/jpeg' }, { ocr: () => RECEIPT });
+test('output-only contract: impact never promises a write', async () => {
+  const r = await svc.buildReviewPackage({ media_ref: '/x/r.jpg', mime_type: 'image/jpeg' }, { ocr: () => RECEIPT });
   assert.ok(/CANDIDATES/.test(r.impact));
   assert.ok(/Nothing is written/.test(r.impact));
 });
 
-test('unreadable file → generated:false with reason', () => {
-  const r = svc.buildReviewPackage({ media_ref: '/x/none.png', mime_type: 'image/png' }, { /* no engine, no real file */ });
+test('unreadable file → generated:false with reason', async () => {
+  const r = await svc.buildReviewPackage({ media_ref: '/x/none.png', mime_type: 'image/png' }, { /* no engine, no real file */ });
   assert.strictEqual(r.generated, false);
   assert.ok(['ocr_not_available', 'file_not_found'].includes(r.reason));
 });
@@ -110,6 +114,8 @@ test('dedupeKey keys on origin + source ref', () => {
   assert.strictEqual(k, 'REVIEW_DOCUMENT_EXTRACTION|whatsapp|/x/r.jpg');
 });
 
-console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
-if (fail) { failures.forEach(f => console.log(`  - ${f.name}: ${f.err.message}`)); process.exit(1); }
-process.exit(0);
+Promise.all(pending).then(() => {
+  console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
+  if (fail) { failures.forEach(f => console.log(`  - ${f.name}: ${f.err.message}`)); process.exit(1); }
+  process.exit(0);
+});

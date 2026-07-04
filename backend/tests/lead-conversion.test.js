@@ -61,9 +61,9 @@ test('calculation/payment/recovery are GATED', () => {
 });
 
 console.log('\n[templates grounded in KB]');
-test('education declaration mentions 15 000 / 2 недели', () => {
+test('education declaration mentions 17 000 / 2 недели (from pricing.js)', () => {
   const t = templates.render('education', { service_category: 'declaration', language: 'ru' });
-  assert.ok(/15 000/.test(t) && /2 недел/.test(t));
+  assert.ok(/17 000/.test(t) && /2 недел/.test(t));
 });
 test('education never quotes an exact final price (только "от")', () => {
   const t = templates.render('education', { service_category: 'certificate', language: 'ru' });

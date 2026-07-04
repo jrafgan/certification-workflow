@@ -36,6 +36,32 @@ function restore() { process.env = { ...ENV }; }
     assert.strictEqual(r.ok, true); assert.strictEqual(r.message_id, 'wamid.X'); restore();
   });
 
+  console.log('\n[sendTemplate — cold-contact, pre-approved template]');
+  await test('not configured → ok:false', async () => {
+    delete process.env.WHATSAPP_CLOUD_TOKEN; delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const r = await cloud.sendTemplate('996700', 'first_contact_check', 'ru', null, { fetch: async () => ({ ok: true, json: async () => ({}) }) });
+    assert.strictEqual(r.ok, false); assert.strictEqual(r.reason, 'not_configured'); restore();
+  });
+  await test('configured → posts type:template with name+lang', async () => {
+    process.env.WHATSAPP_CLOUD_TOKEN = 't'; process.env.WHATSAPP_PHONE_NUMBER_ID = '123';
+    const fetch = async (url, opts) => {
+      assert.ok(url.includes('/123/messages'));
+      const b = JSON.parse(opts.body);
+      assert.strictEqual(b.type, 'template');
+      assert.strictEqual(b.template.name, 'first_contact_check');
+      assert.strictEqual(b.template.language.code, 'ru');
+      assert.strictEqual(b.to, '996700112233'); // non-digits stripped
+      return { ok: true, json: async () => ({ messages: [{ id: 'wamid.T' }] }) };
+    };
+    const r = await cloud.sendTemplate('+996 700 11 22 33', 'first_contact_check', 'ru', null, { fetch });
+    assert.strictEqual(r.ok, true); assert.strictEqual(r.message_id, 'wamid.T'); restore();
+  });
+  await test('missing template name → ok:false', async () => {
+    process.env.WHATSAPP_CLOUD_TOKEN = 't'; process.env.WHATSAPP_PHONE_NUMBER_ID = '123';
+    const r = await cloud.sendTemplate('996700', '', 'ru', null, { fetch: async () => ({ ok: true, json: async () => ({}) }) });
+    assert.strictEqual(r.ok, false); assert.strictEqual(r.reason, 'missing_to_or_template'); restore();
+  });
+
   console.log('\n[verifyWebhook — handshake]');
   await test('matching verify token → echo challenge', () => {
     process.env.WHATSAPP_VERIFY_TOKEN = 'secret123';

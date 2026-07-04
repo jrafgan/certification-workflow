@@ -47,7 +47,7 @@ function mongodAvailable() { return spawnSync('mongod', ['--version'], { encodin
       assert.ok(approved.length === res.approved);
       assert.ok(approved.every(e => e.needs_review === false));
       assert.ok(approved.some(e => /Дастан/.test(e.text)));
-      assert.ok(approved.some(e => /35 000 сом/.test(e.text)));
+      assert.ok(approved.some(e => /35\s?000 сом/.test(e.text))); // формат числа может быть без пробела (env-config)
     });
 
     await test('the status chain is an APPROVED client-facing narrative with a mapping', async () => {
