@@ -103,6 +103,19 @@ test('not stalled → generated:false', () => {
   assert.strictEqual(svc.buildRecoveryProposal(svc.leadFromOrder(order), svc.assessLead(svc.leadFromOrder(order), NOW)).generated, false);
 });
 
+// New Form applications often have NO submission date → without an anchor they never look
+// stalled. scan() injects the last WhatsApp-activity date as anchor_at (клиент написал/посчитали
+// → тишина N дней). This covers exactly that mechanism.
+test('application without date → not stalled; with WhatsApp-activity anchor → stalled', () => {
+  const noDate = svc.leadFromApplication({ row: 7, legal_entity: 'ИП Тест', phone: PHONE, submitted_at: null });
+  assert.strictEqual(noDate.anchor_at, null);
+  assert.strictEqual(svc.assessLead(noDate, NOW), null);                                 // без якоря — не завис
+  const anchored = { ...noDate, anchor_at: new Date(NOW - 10 * DAY).toISOString() };      // как проставит scan из WhatsApp
+  const a = svc.assessLead(anchored, NOW);
+  assert.ok(a, 'с якорем должен стать recoverable');
+  assert.strictEqual(a.days_idle, 10);
+});
+
 console.log('\n[decision transitions + dedupe]');
 
 test('approve does NOT send (→ approved); illegal transition throws', () => {

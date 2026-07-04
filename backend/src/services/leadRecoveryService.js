@@ -193,7 +193,19 @@ async function scan(deps = {}) {
 
   if (deps.applicationsReader) {
     const { applications = [] } = await deps.applicationsReader.readApplications();
-    for (const a of applications) candidates.push(leadFromApplication(a));
+    // Заявки Новой формы часто БЕЗ даты подачи (у формы нет колонки времени —
+    // real-applications-source). Тогда «клиент пропал» меряем от ПОСЛЕДНЕЙ активности в
+    // WhatsApp (deps.lastActivityByPhone: phone_key → ms). Клиент написал/мы посчитали →
+    // тишина N дней = зависший лид, которому пора напомнить.
+    const lastAct = deps.lastActivityByPhone || {};
+    for (const a of applications) {
+      const lead = leadFromApplication(a);
+      if (!lead.anchor_at) {
+        const k = matchKey(lead.phone);
+        if (k && lastAct[k]) lead.anchor_at = new Date(lastAct[k]).toISOString();
+      }
+      candidates.push(lead);
+    }
   }
 
   const summary = { generated: 0, skipped: 0, recoveries: [], reasons: {} };

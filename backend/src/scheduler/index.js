@@ -102,7 +102,19 @@ async function _runLeadRecoveryScan() {
   if (_recoveryRunning) { console.log('[scheduler] Lead recovery skipped — previous run still in progress'); return; }
   _recoveryRunning = true;
   try {
-    const r = await leadRecovery.scan({ applicationsReader: newFormClient });
+    // Last WhatsApp activity per client phone (either direction) — anchor for «клиент пропал»,
+    // т.к. заявки Новой формы часто без даты подачи (real-applications-source).
+    const lastActivityByPhone = {};
+    try {
+      const { WhatsAppMessage } = require('../models');
+      const agg = await WhatsAppMessage.aggregate([
+        { $match: { phone_key: { $nin: [null, ''] } } },
+        { $group: { _id: '$phone_key', last: { $max: { $ifNull: ['$received_at', '$sent_at'] } } } },
+      ]);
+      for (const g of agg) if (g._id && g.last) lastActivityByPhone[g._id] = new Date(g.last).getTime();
+    } catch (e) { console.warn('[scheduler] lead-recovery last-activity agg failed:', e.message); }
+
+    const r = await leadRecovery.scan({ applicationsReader: newFormClient, lastActivityByPhone });
     if (r && (r.generated || r.skipped)) {
       console.log(`[scheduler] Lead recovery — proposals: ${r.generated || 0}, skipped: ${r.skipped || 0}`);
     }
