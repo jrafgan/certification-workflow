@@ -53,7 +53,9 @@ docker compose --profile waweb run --rm wa-web \
 docker compose --profile waweb run --rm wa-web \
   node scripts/wa-web-history-import.js --since=2026-01-01
 ```
-Скан QR (WhatsApp → Связанные устройства) — единственный ручной шаг.
+Скан QR (WhatsApp → Связанные устройства) — единственный ручной шаг. Сессия сохраняется в томе
+`wa_auth` (скрипт кладёт её по `WHATSAPP_SESSION_PATH`, отдельный `clientId: history-import`),
+поэтому повтор или продолжение после обрыва **нового QR не требуют**, а боевой мост GOWA не задет.
 
 ### Флаги
 - `--since=YYYY-MM-DD` — импортировать только сообщения новее даты.
