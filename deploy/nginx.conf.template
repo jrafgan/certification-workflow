@@ -48,6 +48,15 @@ server {
     gzip_types text/css application/javascript application/json image/svg+xml;
     gzip_min_length 1024;
 
+    # GOWA gateway UI — CLOSED to the public (the admin panel controls WhatsApp). Only opened
+    # temporarily for QR pairing. To re-open for re-pairing, restore the proxy_pass block below
+    # (resolver 127.0.0.11; set $gowa_upstream gowa:3000; proxy_pass http://$gowa_upstream; +
+    # the standard proxy headers) and recreate nginx. The live agent uses the internal docker
+    # network (backend↔gowa) and does NOT depend on this public location.
+    location /gowa/ {
+        return 404;
+    }
+
     location / {
         proxy_pass         http://control_center;
         proxy_http_version 1.1;

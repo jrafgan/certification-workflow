@@ -1,0 +1,22 @@
+# tg-userbot — Telegram USERBOT (mtcute MTProto). Separate image so mtcute's native modules
+# (better-sqlite3, crypto-node) and their build toolchain don't bloat the API image.
+FROM node:20-bookworm-slim
+
+# Build toolchain for the native deps (better-sqlite3 + @mtcute/crypto-node), then app deps.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 make g++ ca-certificates tini \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY tg-userbot/package*.json ./
+RUN npm install --omit=dev && npm cache clean --force
+
+COPY tg-userbot/ ./
+
+ENV NODE_ENV=production
+# Session persists under /data (mounted volume) so login survives restarts.
+ENV TG_SESSION=/data/session/jrafgan
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "server.js"]

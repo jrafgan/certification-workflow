@@ -42,6 +42,9 @@ services:
       PORT: "3000"
       # Built from the single source of truth above (authSource=admin for the root user).
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongo:27017/${MONGO_DB:-certification-workflow}?authSource=admin
+      # When the temporary whatsapp-web.js bridge runs (profile "waweb"), route panel sends
+      # through it. Unset/empty → backend uses the official Meta Cloud API instead.
+      WHATSAPP_WEB_SEND_URL: ${WHATSAPP_WEB_SEND_URL:-}
     depends_on:
       mongo: { condition: service_healthy }
     volumes:
@@ -55,6 +58,83 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  # wa-web — TEMPORARY unofficial WhatsApp Web bridge (whatsapp-web.js, ban risk). Opt-in via
+  # `--profile waweb`. Prints a QR to its logs on first boot — scan once with 507391773.
+  # Receives → ingest → panel inbox; exposes internal /send for the backend's panel reply route.
+  wa-web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.whatsapp
+    image: certification-workflow-waweb:latest
+    restart: unless-stopped
+    profiles: ["waweb"]
+    env_file: [.env]
+    environment:
+      NODE_ENV: production
+      WA_WEB_PORT: "3100"
+      MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongo:27017/${MONGO_DB:-certification-workflow}?authSource=admin
+      WHATSAPP_SESSION_PATH: /data/wwebjs_auth
+      WHATSAPP_MEDIA_DIR: /data/whatsapp_media
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+    depends_on:
+      mongo: { condition: service_healthy }
+    volumes:
+      - wa_auth:/data/wwebjs_auth             # persisted QR login — survives restarts
+      - wa_media:/data/whatsapp_media
+    networks: [internal]
+    expose: ["3100"]
+
+  # gowa — UNOFFICIAL WhatsApp gateway (go-whatsapp-web-multidevice / whatsmeow, socket-based,
+  # no Chromium). Ban risk. Opt-in via `--profile gowa`. Receives → webhook → our backend
+  # ingest; backend sends via its REST (through the anti-ban gate). QR via its UI (bound to
+  # localhost — fetch/scan over an SSH tunnel). All outbound stays operator-gated.
+  gowa:
+    image: aldinokemal2104/go-whatsapp-web-multidevice:latest
+    restart: unless-stopped
+    profiles: ["gowa"]
+    command:
+      - rest
+      - --port=3000
+      - --base-path=/gowa
+      - --basic-auth=${GOWA_BASIC_AUTH}
+      - --webhook=http://backend:3000/webhooks/gowa
+      - --webhook-secret=${GOWA_WEBHOOK_SECRET}
+      - --auto-reject-call=true
+      - --account-validation=false
+    volumes:
+      - gowa_storage:/app/storages
+    networks: [internal]
+    ports:
+      - "127.0.0.1:3001:3000"     # UI/QR — localhost only (reach via SSH tunnel; not public)
+
+  # tg-userbot — Telegram USERBOT (mtcute MTProto) on the operator's own account (@jrafgan).
+  # Opt-in via `--profile tguserbot`. Receives → backend webhook; backend sends via its /send.
+  # Interactive login (code/2FA) is driven over its HTTP API (bound to localhost). Session
+  # persists in a volume. Unofficial channel — outbound stays operator-gated upstream.
+  tg-userbot:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.tg-userbot
+    image: certification-workflow-tg-userbot:latest
+    restart: unless-stopped
+    profiles: ["tguserbot"]
+    env_file: [.env]
+    environment:
+      NODE_ENV: production
+      TG_PORT: "3200"
+      TG_API_ID: ${TG_API_ID}
+      TG_API_HASH: ${TG_API_HASH}
+      TG_PHONE: ${TG_PHONE}
+      TG_WEBHOOK_URL: http://backend:3000/webhooks/tg-userbot
+      TG_WEBHOOK_SECRET: ${TG_WEBHOOK_SECRET}
+      TG_SESSION: /data/session/jrafgan
+    volumes:
+      - tg_session:/data
+    networks: [internal]
+    expose: ["3200"]
+    ports:
+      - "127.0.0.1:3201:3200"     # login/status API — localhost only (driven over SSH)
 
   nginx:
     image: nginx:1.27-alpine
@@ -90,3 +170,7 @@ volumes:
   uploads:
   certbot_certs:
   certbot_www:
+  wa_auth:      # whatsapp-web.js session (QR login persistence)
+  wa_media:     # whatsapp-web.js received attachments
+  gowa_storage: # GOWA session (QR login persistence)
+  tg_session:   # Telegram userbot (mtcute) session persistence

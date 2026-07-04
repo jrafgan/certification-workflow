@@ -1,0 +1,13 @@
+{
+  "name": "tg-userbot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Telegram USERBOT (mtcute MTProto) — logs in as the operator's own account, forwards incoming messages to the backend webhook, and sends replies on demand. ESM. Isolated from the backend so its native deps don't bloat the API image.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "@mtcute/node": "^0.25.0",
+    "@mtcute/dispatcher": "^0.25.0"
+  }
+}
