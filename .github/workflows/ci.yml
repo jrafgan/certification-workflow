@@ -29,7 +29,7 @@ jobs:
       - name: Unit tests
         run: |
           for t in pi-calculation payment-recognition document-understanding \
-                   extraction-review draft-email declaration-order-sync lead-recovery workflow-audit \
+                   extraction-review draft-email declaration-order-sync new-application-filter lead-recovery workflow-audit \
                    lead-intent lead-conversion phone-mismatch mockup-agent form-field-mapper \
                    whatsapp-cloud operator-stats first-contact telegram telegram-menu \
                    whatsapp-web-safety gowa; do
