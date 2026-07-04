@@ -5,6 +5,8 @@ const labCommPoller   = require('../services/labCommPoller');
 const newApplicationProposal = require('../services/newApplicationProposalService');
 const declarationOrder = require('../services/declarationOrderService');
 const draftEmail       = require('../services/draftEmailService');
+const leadRecovery     = require('../services/leadRecoveryService');
+const newFormClient    = require('../integrations/newFormClient');
 const { LAB_COMM_POLL_CRON } = require('../config/constants');
 
 // Cron for scanning the New Form → new-application proposals (ПИ+сумма+черновик ответа).
@@ -17,12 +19,17 @@ const ORDER_SYNC_CRON = process.env.ORDER_SYNC_CRON || '*/20 * * * *';
 // Cap on NEW lab-email drafts per run — не заваливать инбокс бэклогом с первого прогона.
 const ORDER_SYNC_DRAFT_LIMIT = parseInt(process.env.ORDER_SYNC_DRAFT_LIMIT, 10) || 15;
 
+// Cron for the Lead Recovery scan — «посчитали, клиент пропал» → предложить оператору
+// напоминание в WhatsApp. По умолчанию каждые 30 минут. Env: LEAD_RECOVERY_CRON.
+const LEAD_RECOVERY_CRON = process.env.LEAD_RECOVERY_CRON || '*/30 * * * *';
+
 // In-process lock: prevents a new poll from starting while one is still running.
 // Sufficient for single-process deployment. If the process crashes mid-poll,
 // the lock resets on restart automatically.
 let _pollRunning = false;
 let _scanRunning = false;
 let _orderSyncRunning = false;
+let _recoveryRunning = false;
 
 async function _runLabCommPoll() {
   if (_pollRunning) {
@@ -87,6 +94,25 @@ async function _runOrderSync() {
   }
 }
 
+// Найти лиды, которые «зависли на стороне клиента» (посчитали → клиент пропал; или заказ ждёт
+// действия клиента) и подготовить оператору напоминание в WhatsApp. Покрывает и заказы, и
+// заявки Новой формы (applicationsReader). Output-only и gated: ничего не отправляется, статусы
+// не меняются. Ошибки не роняют планировщик.
+async function _runLeadRecoveryScan() {
+  if (_recoveryRunning) { console.log('[scheduler] Lead recovery skipped — previous run still in progress'); return; }
+  _recoveryRunning = true;
+  try {
+    const r = await leadRecovery.scan({ applicationsReader: newFormClient });
+    if (r && (r.generated || r.skipped)) {
+      console.log(`[scheduler] Lead recovery — proposals: ${r.generated || 0}, skipped: ${r.skipped || 0}`);
+    }
+  } catch (err) {
+    console.error('[scheduler] Lead recovery scan failed:', err.message);
+  } finally {
+    _recoveryRunning = false;
+  }
+}
+
 function startScheduler() {
   const tz = process.env.SCHEDULER_TIMEZONE || 'UTC';
 
@@ -109,6 +135,13 @@ function startScheduler() {
     console.log(`[scheduler] Order sync scheduled: ${ORDER_SYNC_CRON}`);
   } else {
     console.error(`[scheduler] Invalid ORDER_SYNC_CRON: "${ORDER_SYNC_CRON}". Order sync not started.`);
+  }
+
+  if (cron.validate(LEAD_RECOVERY_CRON)) {
+    cron.schedule(LEAD_RECOVERY_CRON, _runLeadRecoveryScan, { timezone: tz });
+    console.log(`[scheduler] Lead recovery scheduled: ${LEAD_RECOVERY_CRON}`);
+  } else {
+    console.error(`[scheduler] Invalid LEAD_RECOVERY_CRON: "${LEAD_RECOVERY_CRON}". Lead recovery not started.`);
   }
 }
 

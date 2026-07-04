@@ -69,6 +69,12 @@ test('outbound-only refusal-looking text does NOT hide (only client messages cou
   assert.strictEqual(newApps(r).length, 1);
 });
 
+test('semantic refusal key (LLM-provided) → hidden even without a regex match', () => {
+  const r = svc.buildTasks({ waMessages: [], threadStates: {}, labEmails: [], newApplications: [baseApp], declByPhone: {}, semanticRefusedKeys: new Set([key(PHONE)]), now: NOW });
+  assert.strictEqual(newApps(r).length, 0);
+  assert.strictEqual(r.hidden_new_applications, 1);
+});
+
 console.log('\n[isRefused / clientSaidPaid]');
 
 test('isRefused: clear declines', () => {

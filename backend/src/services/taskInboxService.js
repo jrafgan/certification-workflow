@@ -113,6 +113,10 @@ function buildTasks(input = {}) {
   const labEmails = Array.isArray(input.labEmails) ? input.labEmails : [];
   const newApplications = Array.isArray(input.newApplications) ? input.newApplications : [];
   const declByPhone = input.declByPhone || {};   // phone_key → { client, status, count } (live sheet)
+  // phone_key'и, которые смысловой классификатор (LLM точечно) распознал как отказ — считаются
+  // отдельно и передаются готовыми, чтобы buildTasks оставалась ЧИСТОЙ (без LLM/I-O).
+  const semanticRefused = input.semanticRefusedKeys instanceof Set
+    ? input.semanticRefusedKeys : new Set(input.semanticRefusedKeys || []);
   const now = input.now || Date.now();
 
   const tasks = [];
@@ -218,7 +222,7 @@ function buildTasks(input = {}) {
     const waTexts = pk ? (waTextByKey.get(pk) || []) : [];
     const tooOld  = days != null && days > NEW_APP_MAX_AGE_DAYS;
     const isPaid  = (decl && decl.paid > 0) || waTexts.some(clientSaidPaid);
-    const refused = waTexts.some(isRefused);
+    const refused = waTexts.some(isRefused) || (pk && semanticRefused.has(pk));   // regex ИЛИ смысловой (LLM)
     if (tooOld || isPaid || refused) { hiddenNewApps++; continue; }
 
     const stale = days != null && days >= 14;                // ~2 weeks silent → likely abandoned
@@ -275,9 +279,40 @@ async function tasks(deps = {}) {
     order_id: d.order_id, created_at: d.created_at,
   }));
 
+  const declByPhone = declIndexFromRows(declRows || []);
+
+  // Смысловой разбор (§4 ТЗ): для новых заявок, где отказ не ловится регуляркой, распознаём его
+  // по СМЫСЛУ (LLM точечно) и передаём готовый набор ключей в чистую buildTasks. LLM НЕ на пути
+  // рендера каждой строки: только последнее входящее по неоднозначным заявкам, с бюджетом и
+  // кэшем (messageIntentService). Устойчиво: нет ключа/ошибка → просто без смыслового сигнала.
+  const semanticRefusedKeys = new Set();
+  try {
+    const messageIntent = deps.messageIntent || require('./messageIntentService');
+    const latestInbound = new Map();                       // phone_key → текст последнего входящего
+    for (const m of waMessages) {
+      if (m.direction && m.direction !== 'inbound') continue;
+      const k = threadKey(m); if (!k || !m.body) continue;
+      if (!latestInbound.has(k)) latestInbound.set(k, m.body);   // waMessages newest-first
+    }
+    let budget = Number.isFinite(deps.llmBudget) ? deps.llmBudget : 4;   // максимум LLM-вызовов за загрузку
+    for (const a of (newApps || [])) {
+      if (budget <= 0) break;
+      const pk = a.phone ? matchKey(a.phone) : ''; if (!pk) continue;
+      const decl = declByPhone[pk];
+      if (decl && decl.paid > 0) continue;                 // оплачен — и так скрыт, LLM не тратим
+      const subMs = a.submitted_at ? Date.parse(a.submitted_at) : null;
+      if (subMs && (Date.now() - subMs) / 86400000 > NEW_APP_MAX_AGE_DAYS) continue;   // старая — и так скрыта
+      const last = latestInbound.get(pk); if (!last) continue;
+      if (isRefused(last)) continue;                        // regex уже поймает — LLM не нужен
+      const r = await messageIntent.classifyDecision(last, deps);
+      if (r && r.decision === 'refuse' && (r.confidence || 0) >= 0.7) semanticRefusedKeys.add(pk);
+      if (r && r.method === 'llm') budget--;
+    }
+  } catch (_) { /* классификатор недоступен → без смыслового сигнала */ }
+
   return buildTasks({
     waMessages, threadStates, labEmails, newApplications: newApps || [],
-    declByPhone: declIndexFromRows(declRows || []), now: Date.now(),
+    declByPhone, semanticRefusedKeys, now: Date.now(),
   });
 }
 
