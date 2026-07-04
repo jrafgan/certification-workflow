@@ -234,6 +234,10 @@ async function generate(deps = {}) {
   const Order      = deps.Order      || require('../models/Order').Order;
   const EmailDraft = deps.EmailDraft || require('../models/EmailDraft').EmailDraft;
   const now = deps.now || Date.now();
+  // Optional cap on NEW drafts per run — keeps the scheduler from flooding the inbox on the
+  // first Declaration→Order sync (the backlog is worked through over subsequent runs). Dedupe
+  // (one open draft per order+type) prevents regeneration regardless.
+  const limit = Number.isFinite(deps.limit) ? deps.limit : null;
 
   const orders = await Order.find({ status: { $in: ['Запустить', 'Ждем макет', 'Ждем оригинал'] } })
     .select('status sheet_row_id client laboratory deadlines lab_interactions')
@@ -244,6 +248,7 @@ async function generate(deps = {}) {
   const bump = (k) => { summary.reasons[k] = (summary.reasons[k] || 0) + 1; };
 
   for (const order of orders) {
+    if (limit != null && summary.generated >= limit) break;
     const trigger = chooseTrigger(order, now);
     if (!trigger) { summary.skipped++; bump('no_trigger'); continue; }
 

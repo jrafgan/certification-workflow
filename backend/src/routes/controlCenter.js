@@ -11,6 +11,12 @@
 const express = require('express');
 const router  = express.Router();
 const cc = require('../services/controlCenterService');
+const newAppProposal = require('../services/newApplicationProposalService');
+const declarationOrder = require('../services/declarationOrderService');
+const draftEmail = require('../services/draftEmailService');
+const emailFollowup = require('../services/emailFollowupService');
+const emailReplyDraft = require('../services/emailReplyDraftService');
+const whatsappReplyDraft = require('../services/whatsappReplyDraftService');
 const { requireRole } = require('../middleware/auth');
 const admin = requireRole('administrator');
 
@@ -28,6 +34,31 @@ router.get('/order/:id/timeline', async (req, res, next) => { try { res.json(awa
 router.get('/order/:id/workspace', async (req, res, next) => { try { res.json(await cc.orderWorkspace(req.params.id)); } catch (e) { next(e); } });
 router.get('/attention-center', async (_req, res, next) => { try { res.json(await cc.attentionCenter()); } catch (e) { next(e); } });
 
+// ── Task Inbox (WhatsApp-style to-do) ───────────────────────────────────────
+router.get('/tasks',  async (_req, res, next) => { try { res.json(await cc.taskInbox()); } catch (e) { next(e); } });
+router.get('/thread', async (req, res, next) => { try { res.json(await cc.taskThread(req.query.phone)); } catch (e) { next(e); } });
+router.get('/wa-search', async (req, res, next) => { try { res.json(await cc.waSearch({ q: req.query.q, phone: req.query.phone, limit: req.query.limit })); } catch (e) { next(e); } });
+// Неотвеченные письма — живой список цепочек Gmail, где мы так и не ответили (последнее
+// сообщение не от нас). Показывает тему, текст и файл последнего сообщения.
+router.get('/emails-unanswered', async (req, res, next) => {
+  try { res.json(await emailFollowup.unanswered({ limit: req.query.limit ? parseInt(req.query.limit, 10) : 30 })); } catch (e) { next(e); }
+});
+// Подготовить черновик ответа на письмо (по требованию, на LLM). Output-only.
+router.post('/emails/:threadId/draft', async (req, res, next) => {
+  try { res.json(await emailReplyDraft.draftReply({ threadId: req.params.threadId })); } catch (e) { next(e); }
+});
+// Подготовить черновик ответа КЛИЕНТУ в WhatsApp — учитывает статус в «Декларации» + историю
+// переписки + БЗ. Output-only (оператор правит и шлёт существующей кнопкой отправки).
+router.post('/whatsapp-draft', async (req, res, next) => {
+  try { res.json(await whatsappReplyDraft.draftReply({ phone: (req.body && req.body.phone) })); } catch (e) { next(e); }
+});
+router.post('/thread/seen', async (req, res, next) => {
+  try {
+    const { phone, action, until } = req.body || {};
+    res.json(await cc.markThread({ phone, action: action || 'seen', until, actor: req.user }));
+  } catch (e) { next(e); }
+});
+
 // ── actions (operator + admin), audited ─────────────────────────────────────
 router.post('/decide', async (req, res, next) => {
   try {
@@ -40,6 +71,26 @@ router.post('/chat', async (req, res, next) => {
   try {
     const { type, id, question } = req.body || {};
     res.json(await cc.chat({ type, id, question }));
+  } catch (e) { next(e); }
+});
+
+// Просканировать Новую форму → создать предложения по новым заявкам (ПИ+сумма+черновик).
+// Output-only, идемпотентно (дубли пропускаются). Показывается в /inbox.
+router.post('/new-applications/scan', async (req, res, next) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 25;
+    res.json(await newAppProposal.generate({ limit, newestFirst: true }));
+  } catch (e) { next(e); }
+});
+
+// Ручной запуск синка «Декларация» → Order + подготовки писем-заявок лабораториям (то же,
+// что делает шедулер _runOrderSync). Output-only, идемпотентно, письма НЕ отправляются.
+router.post('/order-sync', async (req, res, next) => {
+  try {
+    const draftLimit = req.query.draft_limit ? parseInt(req.query.draft_limit, 10) : 15;
+    const sync = await declarationOrder.sync();
+    const drafts = await draftEmail.generate({ limit: draftLimit });
+    res.json({ sync, drafts, recommend_only: true });
   } catch (e) { next(e); }
 });
 

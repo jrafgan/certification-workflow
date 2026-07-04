@@ -25,6 +25,11 @@ backend/uploads/layouts/*
 backend/uploads/originals/*
 !backend/uploads/layouts/.gitkeep
 !backend/uploads/originals/.gitkeep
+backend/uploads/mockups/
+
+# Scratch / runtime artifacts — never commit (backlog scans, media, generated docx, demos)
+backend/tmp/
+samples/
 
 # WhatsApp Web — persisted session + received media (never commit)
 backend/.wwebjs_auth/

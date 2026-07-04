@@ -106,6 +106,10 @@ const orderSchema = new Schema({
   },
   balance_due:      { type: Number, default: 0 },
   declaration_id:   { type: Schema.Types.ObjectId, ref: 'Declaration' },
+  // Provenance: the «Декларация» sheet row this order was materialized from (1-based row id
+  // as a string, e.g. "42"). Stable idempotency key for the Declaration→Order sync — the
+  // sheet is the source of truth; Mongo is a replica. Absent on manually created orders.
+  sheet_row_id:     { type: String, trim: true },
   cancelled_reason: { type: String },
 
   client:           { type: clientSchema,          default: () => ({}) },
@@ -135,6 +139,11 @@ orderSchema.index({ 'deadlines.original_expected': 1 },   { sparse: true });
 
 // Sparse: declaration_id is absent on manually created orders until linked
 orderSchema.index({ declaration_id: 1 }, { sparse: true });
+
+// Unique+sparse: one order per «Декларация» sheet row — makes the Declaration→Order sync
+// idempotent (upsert on sheet_row_id). Sparse so manually created orders (no sheet_row_id)
+// don't collide on null.
+orderSchema.index({ sheet_row_id: 1 }, { unique: true, sparse: true });
 
 // Sparse: phone is present on all form-intake orders but may be absent on partial manual entries
 orderSchema.index({ 'client.phone': 1 }, { sparse: true });
