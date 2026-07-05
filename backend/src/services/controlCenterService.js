@@ -414,6 +414,41 @@ async function auditLog({ limit = 100 } = {}) {
   return { db_connected: true, entries: await audit.list({ limit }) };
 }
 
+// Per-user activity counter — «кто что сделал и сколько», for oversight / error review.
+// Aggregates the immutable audit trail by user, with a breakdown by action and last-active time.
+const AUDIT_ACTION_RU = {
+  login: 'входы', logout: 'выходы', change_password: 'смена пароля',
+  approve: 'одобрено', reject: 'отклонено', edit: 'правки',
+  application_mark_not_new: 'заявки «не новая»', application_reopen: 'заявки возвращены',
+  thread_done: 'треды «готово»', thread_snooze: 'треды отложены', thread_seen: 'просмотры',
+  create_user: 'создано пользователей', kb_decision: 'решения по БЗ',
+};
+async function userActivity({ days = 30 } = {}) {
+  if (!connected()) return { db_connected: false, users: [] };
+  const { AuditLog } = require('../models');
+  const since = days ? new Date(Date.now() - Number(days) * 86_400_000) : null;
+  const rows = await AuditLog.aggregate([
+    ...(since ? [{ $match: { at: { $gte: since } } }] : []),
+    { $group: { _id: { user: '$user', action: '$action' }, n: { $sum: 1 }, last: { $max: '$at' }, role: { $last: '$role' } } },
+  ]);
+  const byUser = new Map();
+  for (const r of rows) {
+    const u = r._id.user || '—';
+    let e = byUser.get(u);
+    if (!e) { e = { user: u, role: r.role || null, total: 0, last_at: null, by_action: {} }; byUser.set(u, e); }
+    e.total += r.n;
+    e.by_action[r._id.action] = (e.by_action[r._id.action] || 0) + r.n;
+    if (r.role) e.role = r.role;
+    if (!e.last_at || new Date(r.last) > new Date(e.last_at)) e.last_at = r.last;
+  }
+  const users = [...byUser.values()].sort((a, b) => b.total - a.total).map(e => ({
+    ...e,
+    breakdown: Object.entries(e.by_action).sort((a, b) => b[1] - a[1])
+      .map(([action, n]) => ({ action, label: AUDIT_ACTION_RU[action] || action, n })),
+  }));
+  return { db_connected: true, days: Number(days), users };
+}
+
 // ─── Attention queue + Critical Issues (operational control center) ──────────
 const MS_DAY = 86_400_000;
 function _daysSince(d, now) { return d == null ? null : Math.floor((now - new Date(d).getTime()) / MS_DAY); }
@@ -607,7 +642,7 @@ async function reopenApplication({ phone, sheet_row, actor = {} } = {}) {
 
 module.exports = {
   summary, pipeline, inbox, drafts, kb, decide, chat, LEAD_STATE_LABELS,
-  businessDashboard, sources, listUsers, createUser, setUserActive, kbPending, kbDecide, auditLog,
+  businessDashboard, sources, listUsers, createUser, setUserActive, kbPending, kbDecide, auditLog, userActivity,
   // attention-first (pure + db)
   orderDangers, orderTimelineSteps, attention, orderTimeline, orderWorkspace, attentionCenter,
   // task inbox (WhatsApp-style to-do)

@@ -42,6 +42,17 @@
   $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) show(b.dataset.screen); });
   $('#refresh').addEventListener('click', () => show(current));
   $('#logout').addEventListener('click', async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/app/login.html'; });
+  // Self-service password change — available to every logged-in user (operator + admin).
+  $('#change-pass').addEventListener('click', async () => {
+    const current_password = prompt('Текущий пароль:');
+    if (current_password == null) return;
+    const new_password = prompt('Новый пароль (минимум 6 символов):');
+    if (new_password == null) return;
+    if (String(new_password).length < 6) { toast('Новый пароль — минимум 6 символов'); return; }
+    if (new_password !== prompt('Повторите новый пароль:')) { toast('Пароли не совпадают'); return; }
+    const r = await postJSON('/api/auth/change-password', { current_password, new_password });
+    toast(r && r.ok ? 'Пароль изменён ✓' : (r && r.message) || 'Не удалось сменить пароль');
+  });
 
   // ── Сущность по номеру WhatsApp (1-й ID телефон, 2-й ID юрлицо) ──
   const ACTOR_RU = { operator: 'оператор', lab: 'лаборатория', client: 'клиент' };
@@ -647,6 +658,22 @@
     $('#users-list').innerHTML = `<table class="audit"><thead><tr><th>Логин</th><th>Имя</th><th>Роль</th><th>Статус</th><th></th></tr></thead><tbody>` +
       (d.users || []).map(u => `<tr><td>${esc(u.username)}</td><td>${esc(u.display_name)}</td><td>${u.role === 'administrator' ? 'Администратор' : 'Оператор'}</td><td>${u.active ? 'активен' : 'отключён'}</td>
         <td><button class="btn-edit" data-uid="${esc(u.id)}" data-active="${u.active ? '0' : '1'}">${u.active ? 'Отключить' : 'Включить'}</button></td></tr>`).join('') + '</tbody></table>';
+    loadUserActivity();
+  }
+  // Счётчик действий по пользователям (кто что сделал и сколько) — для разбора ошибок.
+  async function loadUserActivity() {
+    const host = $('#users-activity'); if (!host) return;
+    const d = await getJSON(api('/user-activity?days=30')).catch(() => null);
+    if (!d || !d.users) { host.innerHTML = ''; return; }
+    host.innerHTML = `<h3 style="margin:16px 0 6px">Активность за 30 дней — кто что сделал</h3>` +
+      (d.users.length ? `<table class="audit"><thead><tr><th>Пользователь</th><th>Всего</th><th>Действия</th><th>Последняя активность</th></tr></thead><tbody>` +
+        d.users.map(u => `<tr>
+          <td>${esc(u.user)} <span class="role">${u.role === 'administrator' ? 'админ' : (u.role || 'оператор')}</span></td>
+          <td><b>${u.total}</b></td>
+          <td>${u.breakdown.map(b => `${esc(b.label)}: <b>${b.n}</b>`).join(' · ')}</td>
+          <td>${u.last_at ? new Date(u.last_at).toLocaleString('ru-RU') : '—'}</td>
+        </tr>`).join('') + '</tbody></table>'
+      : '<div class="muted">Пока нет записанных действий.</div>');
   }
   $('#user-form').addEventListener('submit', async e => {
     e.preventDefault();

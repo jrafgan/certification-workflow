@@ -116,6 +116,10 @@ router.post('/users', admin, async (req, res, next) => {
 router.post('/users/:id/active', admin, async (req, res, next) => {
   try { res.json({ user: await cc.setUserActive(req.params.id, !!(req.body && req.body.active), req.user) }); } catch (e) { next(e); }
 });
+// Per-user activity counter (кто что сделал и сколько) — oversight for error review.
+router.get('/user-activity', admin, async (req, res, next) => {
+  try { res.json(await cc.userActivity({ days: req.query.days ? parseInt(req.query.days, 10) : 30 })); } catch (e) { next(e); }
+});
 
 // ── admin: KB management ────────────────────────────────────────────────────
 router.get('/kb-pending', admin, async (_req, res, next) => { try { res.json(await cc.kbPending()); } catch (e) { next(e); } });

@@ -32,4 +32,17 @@ router.get('/me', (req, res) => {
   res.status(401).json({ code: 'UNAUTHENTICATED', message: 'Не выполнен вход' });
 });
 
+// POST /api/auth/change-password { current_password, new_password } — self-service, any role.
+router.post('/change-password', async (req, res, next) => {
+  try {
+    const sess = req.session && req.session.user;
+    if (!sess) return res.status(401).json({ code: 'UNAUTHENTICATED', message: 'Не выполнен вход' });
+    const { current_password, new_password } = req.body || {};
+    const r = await authService.changePassword({ username: sess.username, currentPassword: current_password, newPassword: new_password });
+    if (!r.ok) return res.status(400).json({ code: 'BAD_CURRENT', message: 'Текущий пароль неверный' });
+    audit.record({ user: sess.username, role: sess.role, action: 'change_password', summary: `${sess.display_name} сменил пароль` });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 module.exports = router;

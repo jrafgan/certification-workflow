@@ -54,6 +54,20 @@ async function createUser({ username, password, role = 'operator', display_name 
   }
 }
 
+// Self-service password change: verify the CURRENT password, then set a new salt+hash.
+// Returns { ok:true } | { ok:false, reason:'bad_current' }. Plaintext never stored/logged.
+async function changePassword({ username, currentPassword, newPassword } = {}, deps = {}) {
+  const { User } = deps.User ? deps : require('../models');
+  if (!newPassword || String(newPassword).length < 6) throw errorUtils.validationError('Новый пароль — минимум 6 символов');
+  const u = await User.findOne({ username: String(username || '').trim().toLowerCase() });
+  if (!u) throw errorUtils.notFoundError('Пользователь не найден');
+  if (!verifyPassword(currentPassword, u.password_salt, u.password_hash)) return { ok: false, reason: 'bad_current' };
+  const { salt, hash } = hashPassword(newPassword);
+  u.password_salt = salt; u.password_hash = hash;
+  await u.save();
+  return { ok: true };
+}
+
 async function listUsers(deps = {}) {
   const { User } = deps.User ? deps : require('../models');
   const us = await User.find({}).sort({ created_at: 1 }).lean();
@@ -79,4 +93,4 @@ async function ensureSeedAdmin(deps = {}) {
   return { seeded: true, username };
 }
 
-module.exports = { hashPassword, verifyPassword, authenticate, createUser, listUsers, setActive, ensureSeedAdmin, publicUser };
+module.exports = { hashPassword, verifyPassword, authenticate, createUser, changePassword, listUsers, setActive, ensureSeedAdmin, publicUser };
