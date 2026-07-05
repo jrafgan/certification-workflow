@@ -6,8 +6,13 @@ const newApplicationProposal = require('../services/newApplicationProposalServic
 const declarationOrder = require('../services/declarationOrderService');
 const draftEmail       = require('../services/draftEmailService');
 const leadRecovery     = require('../services/leadRecoveryService');
+const autoResponder    = require('../services/whatsappAutoResponderService');
 const newFormClient    = require('../integrations/newFormClient');
 const { LAB_COMM_POLL_CRON } = require('../config/constants');
+
+// Cron for the WhatsApp auto-responder poll — picks up recent inbound (web.js-written) and, per
+// WA_AUTORESPONDER_MODE, records what it would send (shadow) or sends it (auto). Every 2 min.
+const WA_AUTORESPONDER_POLL_CRON = process.env.WA_AUTORESPONDER_POLL_CRON || '*/2 * * * *';
 
 // Cron for scanning the New Form → new-application proposals (ПИ+сумма+черновик ответа).
 // Отдельный от lab-poll ритм; по умолчанию каждые 15 минут. Env: NEW_APP_SCAN_CRON.
@@ -32,6 +37,20 @@ let _pollRunning = false;
 let _scanRunning = false;
 let _orderSyncRunning = false;
 let _recoveryRunning = false;
+let _autoResponderRunning = false;
+
+async function _runAutoResponderPoll() {
+  if (_autoResponderRunning) return;
+  _autoResponderRunning = true;
+  try {
+    const r = await autoResponder.processRecentInbound();
+    if (r && r.handled) console.log(`[scheduler] Auto-responder — handled: ${r.handled}, decisions: ${JSON.stringify(r.decisions)}`);
+  } catch (err) {
+    console.error('[scheduler] Auto-responder poll failed:', err.message);
+  } finally {
+    _autoResponderRunning = false;
+  }
+}
 
 async function _runLabCommPoll() {
   if (_pollRunning) {
@@ -156,6 +175,13 @@ function startScheduler() {
     console.log(`[scheduler] Lead recovery scheduled: ${LEAD_RECOVERY_CRON}`);
   } else {
     console.error(`[scheduler] Invalid LEAD_RECOVERY_CRON: "${LEAD_RECOVERY_CRON}". Lead recovery not started.`);
+  }
+
+  if (cron.validate(WA_AUTORESPONDER_POLL_CRON)) {
+    cron.schedule(WA_AUTORESPONDER_POLL_CRON, _runAutoResponderPoll, { timezone: tz });
+    console.log(`[scheduler] Auto-responder poll scheduled: ${WA_AUTORESPONDER_POLL_CRON} (mode=${process.env.WA_AUTORESPONDER_MODE || 'shadow'})`);
+  } else {
+    console.error(`[scheduler] Invalid WA_AUTORESPONDER_POLL_CRON: "${WA_AUTORESPONDER_POLL_CRON}". Auto-responder poll not started.`);
   }
 }
 

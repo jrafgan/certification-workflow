@@ -19,6 +19,7 @@
           <button data-screen="inbox">Входящие задачи</button>
           <button data-screen="emails">Письма без ответа</button>
           <button data-screen="drafts">Черновики</button>
+          <button data-screen="autoreplies">Авто-ответы</button>
           <button data-screen="pipeline">Воронка клиентов</button>
           <button data-screen="first-contact">Новые номера</button>
           <button data-screen="stats">Статистика</button>
@@ -95,6 +96,14 @@
     <section id="screen-drafts" class="screen">
       <h2>Черновики</h2>
       <div id="drafts-groups"></div>
+    </section>
+
+    <!-- Авто-ответы (проверка решений авто-ответчика перед включением реальной отправки) -->
+    <section id="screen-autoreplies" class="screen">
+      <h2>Авто-ответы <span class="muted">— что агент ответил бы клиентам (проверка перед включением)</span></h2>
+      <div id="ar-mode" class="td-info"></div>
+      <div id="ar-filters" class="tk-filters"></div>
+      <div id="ar-list"></div>
     </section>
 
     <!-- Воронка клиентов -->

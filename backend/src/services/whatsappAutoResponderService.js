@@ -213,7 +213,43 @@ async function handleInbound(raw = {}, deps = {}) {
   return { decision: 'gated', skip_reason: 'send_failed', send_result: sendResult };
 }
 
+// ─── Poller: process recently-arrived inbound from whatsapp_messages ───────────
+// Live inbound is written to whatsapp_messages by web.js (it reads the channel; GOWA only
+// SENDS). The GOWA webhook does not deliver incoming here, so the auto-responder is driven by
+// this poll instead: it picks up direct inbound from the last window and runs handleInbound on
+// each. Idempotent (handleInbound skips a message already in wa_autoreplies), so overlapping
+// windows are safe. deps for tests. Returns { scanned, handled, decisions }.
+async function processRecentInbound(deps = {}) {
+  if (mode() === 'off') return { skipped: 'mode_off' };
+  const { WhatsAppMessage } = deps.WhatsAppMessage ? deps : require('../models');
+  const windowMin = Number(process.env.WA_AUTORESPONDER_WINDOW_MIN || 20);
+  const since = new Date(Date.now() - windowMin * 60000);
+  const msgs = await WhatsAppMessage.find({
+    direction: 'inbound',
+    is_group: { $ne: true },
+    received_at: { $gte: since },
+    body: { $nin: [null, ''] },
+    provider_message_id: { $nin: [null, ''] },
+  }).sort({ received_at: 1 }).limit(300).lean();
+
+  let handled = 0; const decisions = {};
+  for (const m of msgs) {
+    const raw = {
+      id: m.provider_message_id,
+      from: m.from_phone || m.phone_key || '',
+      body: m.body,
+      is_group: false,
+      from_me: false,
+    };
+    try {
+      const r = await handleInbound(raw, deps);
+      if (r && r.decision) { handled++; decisions[r.decision] = (decisions[r.decision] || 0) + 1; }
+    } catch (_) { /* one bad message never stops the batch */ }
+  }
+  return { scanned: msgs.length, handled, decisions };
+}
+
 module.exports = {
-  classifyTopic, composeAnswer, handleInbound,
+  classifyTopic, composeAnswer, handleInbound, processRecentInbound,
   AUTO_ALLOWED_KINDS, mode, _phoneFromJid: phoneFromJid,
 };

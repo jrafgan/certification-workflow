@@ -449,6 +449,32 @@ async function userActivity({ days = 30 } = {}) {
   return { db_connected: true, days: Number(days), users };
 }
 
+// Авто-ответчик: список решений (что агент ОТВЕТИЛ БЫ / ответил / отложил) для проверки
+// оператором ПЕРЕД включением реальной отправки (mode=auto). Read-only.
+const WA_DECISION_RU = { shadow: 'ответил бы (не отправлено)', auto_sent: 'отправлено', gated: 'оператору', skipped: 'пропущено' };
+async function autoReplies({ limit = 80, decision } = {}) {
+  if (!connected()) return { db_connected: false, items: [], counts: {}, mode: process.env.WA_AUTORESPONDER_MODE || 'shadow' };
+  const { WaAutoReply } = require('../models');
+  const q = {};
+  if (decision) q.decision = decision;
+  const [docs, agg] = await Promise.all([
+    WaAutoReply.find(q).sort({ created_at: -1 }).limit(Math.min(Number(limit) || 80, 300)).lean(),
+    WaAutoReply.aggregate([{ $group: { _id: '$decision', n: { $sum: 1 } } }]),
+  ]);
+  const counts = {}; for (const a of agg) counts[a._id || 'unknown'] = a.n;
+  return {
+    db_connected: true,
+    mode: process.env.WA_AUTORESPONDER_MODE || 'shadow',
+    counts,
+    items: docs.map(d => ({
+      id: String(d._id), phone: d.to_phone || d.phone_key || '', kind: d.kind, topic: d.topic || null,
+      inbound: d.inbound_text || '', answer: d.answer_text || '', matched: d.matched_kb_ref || null,
+      decision: d.decision, decision_ru: WA_DECISION_RU[d.decision] || d.decision,
+      skip_reason: d.skip_reason || null, at: d.created_at || null,
+    })),
+  };
+}
+
 // ─── Attention queue + Critical Issues (operational control center) ──────────
 const MS_DAY = 86_400_000;
 function _daysSince(d, now) { return d == null ? null : Math.floor((now - new Date(d).getTime()) / MS_DAY); }
@@ -647,4 +673,5 @@ module.exports = {
   orderDangers, orderTimelineSteps, attention, orderTimeline, orderWorkspace, attentionCenter,
   // task inbox (WhatsApp-style to-do)
   taskInbox, taskThread, markThread, waSearch, markApplication, reopenApplication,
+  autoReplies,
 };

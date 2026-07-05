@@ -31,7 +31,7 @@
   const offline = (msg) => `<div class="offline">${esc(msg || 'Нет подключения к базе данных. Запустите MongoDB — интерфейс работает, данные появятся после подключения.')}</div>`;
 
   // ── навигация ───────────────────────────────────────────────────────────
-  const SCREENS = { tasks: loadTasks, dashboard: loadAttention, inbox: loadInbox, emails: loadEmails, drafts: loadDrafts, pipeline: loadPipeline, chat: loadChat, kb: loadKb, audit: loadAudit, users: loadUsers, 'first-contact': loadFirstContact, stats: loadStats };
+  const SCREENS = { tasks: loadTasks, dashboard: loadAttention, inbox: loadInbox, emails: loadEmails, drafts: loadDrafts, autoreplies: loadAutoReplies, pipeline: loadPipeline, chat: loadChat, kb: loadKb, audit: loadAudit, users: loadUsers, 'first-contact': loadFirstContact, stats: loadStats };
   let current = 'tasks';
   function show(name) {
     current = name;
@@ -553,6 +553,37 @@
     }
     el.innerHTML = html; lastItems = all; refreshChatSelector();
   }
+
+  // ── Авто-ответы: что агент ответил бы / ответил / отложил (проверка перед включением auto) ──
+  let arFilter = 'shadow';
+  const AR_KIND_RU = { service_info: 'инфо', pricing_from_kb: 'цены', timelines_from_kb: 'сроки', application_link: 'заявка', application_instructions: 'инструкция', other: 'прочее' };
+  const AR_DEC_CLASS = { shadow: 'warn', auto_sent: 'ok', gated: '', skipped: 'muted' };
+  async function loadAutoReplies() {
+    const d = await getJSON(api('/autoreplies?limit=120')).catch(() => null);
+    setDb(d && d.db_connected);
+    const modeEl = $('#ar-mode'), filtEl = $('#ar-filters'), listEl = $('#ar-list');
+    if (!d || !d.db_connected) { if (listEl) listEl.innerHTML = offline(); return; }
+    const modeRu = { off: 'выключен', shadow: 'тень (ничего не отправляет)', auto: 'АВТО-ОТПРАВКА ВКЛЮЧЕНА' }[d.mode] || d.mode;
+    modeEl.innerHTML = `Режим авто-ответчика: <b>${esc(modeRu)}</b>. ${d.mode === 'shadow' ? 'Агент только показывает, что <b>ответил бы</b> — ничего не отправляется. Проверьте качество ниже, затем можно включить реальную отправку.' : ''}`;
+    const c = d.counts || {};
+    const FILT = [['shadow', 'Ответил бы', c.shadow || 0], ['auto_sent', 'Отправлено', c.auto_sent || 0], ['gated', 'Оператору', c.gated || 0], ['', 'Все', (c.shadow || 0) + (c.auto_sent || 0) + (c.gated || 0) + (c.skipped || 0)]];
+    filtEl.innerHTML = FILT.map(([id, label, n]) => `<button class="tk-f ${arFilter === id ? 'active' : ''}" data-ar-filter="${id}">${label} <span class="tk-fn">${n}</span></button>`).join('');
+    const items = (d.items || []).filter(i => !arFilter || i.decision === arFilter);
+    listEl.innerHTML = items.length ? items.map(i => `
+      <div class="ar-card td-info" style="margin:8px 0">
+        <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
+          <span><b>${esc(i.phone || '—')}</b> <span class="tk-tag">${esc(AR_KIND_RU[i.kind] || i.kind)}</span></span>
+          <span class="${AR_DEC_CLASS[i.decision] || ''}">${esc(i.decision_ru)}${i.skip_reason ? ' · ' + esc(i.skip_reason) : ''} · ${i.at ? new Date(i.at).toLocaleString('ru-RU') : ''}</span>
+        </div>
+        <div style="margin-top:6px"><span class="muted">Клиент:</span> ${esc(i.inbound || '')}</div>
+        ${i.answer ? `<div style="margin-top:4px"><span class="muted">Агент ответил бы:</span> ${esc(i.answer)}</div>` : '<div style="margin-top:4px" class="muted">(ответа нет — передано оператору)</div>'}
+      </div>`).join('')
+      : '<div class="empty">Пока нет решений в этой категории.</div>';
+  }
+  document.addEventListener('click', e => {
+    const b = e.target.closest('button[data-ar-filter]'); if (!b) return;
+    arFilter = b.dataset.arFilter; loadAutoReplies();
+  });
 
   // действия: одобрить / отклонить / изменить / спросить
   document.addEventListener('click', async (e) => {

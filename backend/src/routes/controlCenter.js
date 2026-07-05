@@ -38,6 +38,8 @@ router.get('/attention-center', async (_req, res, next) => { try { res.json(awai
 router.get('/tasks',  async (_req, res, next) => { try { res.json(await cc.taskInbox()); } catch (e) { next(e); } });
 router.get('/thread', async (req, res, next) => { try { res.json(await cc.taskThread(req.query.phone)); } catch (e) { next(e); } });
 router.get('/wa-search', async (req, res, next) => { try { res.json(await cc.waSearch({ q: req.query.q, phone: req.query.phone, limit: req.query.limit })); } catch (e) { next(e); } });
+// Авто-ответчик: решения агента для проверки оператором (перед включением реальной отправки).
+router.get('/autoreplies', async (req, res, next) => { try { res.json(await cc.autoReplies({ limit: req.query.limit ? parseInt(req.query.limit, 10) : 80, decision: req.query.decision })); } catch (e) { next(e); } });
 // Неотвеченные письма — живой список цепочек Gmail, где мы так и не ответили (последнее
 // сообщение не от нас). Показывает тему, текст и файл последнего сообщения.
 router.get('/emails-unanswered', async (req, res, next) => {

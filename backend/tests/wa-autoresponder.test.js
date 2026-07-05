@@ -136,6 +136,34 @@ test('auto: recent HUMAN outbound → gated (don\'t step on operator)', async ()
   assert.strictEqual(r.decision, 'gated'); assert.strictEqual(r.skip_reason, 'human_active'); assert.strictEqual(s.sent.length, 0);
 });
 
+// ── processRecentInbound (poller) ──
+test('poller: adapts whatsapp_messages docs and handles each (shadow)', async () => {
+  process.env.WA_AUTORESPONDER_MODE = 'shadow';
+  const created = [], docs = [
+    { provider_message_id: 'p1', from_phone: '996700111222', phone_key: '700111222', body: 'сколько стоит декларация?' },
+    { provider_message_id: 'p2', from_phone: '996700333444', phone_key: '700333444', body: 'что такое тнвэд?' },
+  ];
+  const deps = {
+    WhatsAppMessage: {
+      find: () => ({ sort: () => ({ limit: () => ({ lean: async () => docs }) }) }),
+      exists: async () => false,
+    },
+    WaAutoReply: { exists: async () => false, create: async (d) => { created.push(d); return d; } },
+    knowledgeBaseService: { getApprovedKnowledge: async () => KB, getBusinessSetting: async () => ({ value: 'x' }) },
+    outbound: { send: async () => ({ ok: true }) },
+  };
+  const r = await svc.processRecentInbound(deps);
+  assert.strictEqual(r.scanned, 2);
+  assert.strictEqual(r.handled, 2);
+  assert.strictEqual(created.length, 2);          // both recorded as shadow
+  assert.ok(created.every(c => c.decision === 'shadow'));
+});
+test('poller: mode=off → does nothing', async () => {
+  process.env.WA_AUTORESPONDER_MODE = 'off';
+  const r = await svc.processRecentInbound({});
+  assert.strictEqual(r.skipped, 'mode_off');
+});
+
 (async () => {
   console.log('\n[wa-autoresponder]');
   for (const { name, fn } of queue) {
