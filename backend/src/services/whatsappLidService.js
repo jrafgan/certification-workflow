@@ -113,6 +113,44 @@ async function resolveIdentity(raw = {}, deps = {}) {
   return { from_phone: '', phone_key: '', lid, lid_key: lk, resolution: 'lid_only', resolved_at: null };
 }
 
+// ─── Self-healing sweep: apply already-known mappings to stuck lid-only messages ──────
+// A message can arrive via the GOWA webhook BEFORE web.js has resolved that LID → it is stored
+// lid-only (empty phone_key) and the panel shows a raw LID. Later web.js resolves the LID into
+// lid_mappings, but nothing rewrites the earlier message. This finds inbound messages that still
+// carry a LID with no phone_key and, if a mapping now EXISTS, rewrites from_phone/phone_key —
+// exactly what web.js resolve-lids does, but driven from the backend so the panel is always
+// correct. Idempotent, bounded, safe to run on every inbox load. Returns { scanned, fixed }.
+async function applyStoredMappings(deps = {}) {
+  const { WhatsAppMessage } = deps.WhatsAppMessage ? deps : require('../models');
+  const { LidMapping } = deps.LidMapping ? deps : require('../models/LidMapping');
+  const limit = deps.limit || 2000;
+
+  const stuck = await WhatsAppMessage.find({
+    lid: { $exists: true, $nin: [null, ''] },
+    $or: [{ phone_key: { $in: [null, ''] } }, { phone_key: { $exists: false } }],
+  }).select('_id lid').limit(limit).lean();
+  if (!stuck.length) return { scanned: 0, fixed: 0 };
+
+  const lids = [...new Set(stuck.map(m => m.lid))];
+  const maps = await LidMapping.find({ lid: { $in: lids } }).lean();
+  const byLid = new Map();
+  for (const m of maps) if (m.phone_key || m.phone) byLid.set(m.lid, m);
+
+  const ops = [];
+  for (const m of stuck) {
+    const map = byLid.get(m.lid);
+    if (!map) continue;
+    const phone = map.phone || '';
+    const key = map.phone_key || matchKey(phone);
+    if (!key) continue;
+    ops.push({ updateOne: { filter: { _id: m._id }, update: { $set: {
+      from_phone: phone, phone_key: key, phone_resolution: 'stored_lid',
+    } } } });
+  }
+  if (ops.length) await WhatsAppMessage.bulkWrite(ops, { ordered: false });
+  return { scanned: stuck.length, fixed: ops.length };
+}
+
 module.exports = {
   RESOLUTIONS,
   isLid,
@@ -120,4 +158,5 @@ module.exports = {
   phoneFromWid,
   deriveIdentity,
   resolveIdentity,
+  applyStoredMappings,
 };

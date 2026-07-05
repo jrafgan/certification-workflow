@@ -378,6 +378,10 @@ async function tasks(deps = {}) {
   const { WhatsAppMessage, EmailDraft, InboxThreadState, ApplicationOverride } = models;
   const safe = async (p, d) => { try { return await p; } catch (_) { return d; } };
 
+  // Self-heal LID→phone BEFORE reading: rewrite any lid-only inbound whose mapping now exists,
+  // so the panel never shows a raw LID once web.js has resolved it (whatsapp-full-archive).
+  await safe((deps.lidService || require('./whatsappLidService')).applyStoredMappings(deps), null);
+
   const wq = require('./workQueueService');
   const [waMessages, labDrafts, stateDocs, newApps, declRows, overrideDocs] = await Promise.all([
     // Inbox = direct chats + group messages addressed to the operator (archived group chatter

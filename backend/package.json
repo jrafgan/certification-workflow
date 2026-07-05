@@ -42,9 +42,10 @@
     "kb:build": "node scripts/kb-build.js",
     "kb:seed-operator": "node scripts/kb-seed-operator.js",
     "wa:history": "node -r dotenv/config scripts/wa-web-history-import.js",
-  "verify:sheets": "node scripts/verify-sheets.js",
+    "verify:sheets": "node scripts/verify-sheets.js",
     "verify:new-form": "node scripts/verify-new-form.js",
-    "scan:lab-attention": "node scripts/scan-lab-attention.js"
+    "scan:lab-attention": "node scripts/scan-lab-attention.js",
+    "test:wa-lid-selfheal": "node tests/wa-lid-selfheal.test.js"
   },
   "engines": {
     "node": ">=18.0.0"
