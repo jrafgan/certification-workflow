@@ -37,6 +37,7 @@
     "test:task-inbox": "node tests/task-inbox.test.js",
     "test:whatsapp-live-match": "node tests/whatsapp-live-match.test.js",
     "test:whatsapp-archive": "node tests/whatsapp-archive.test.js",
+    "test:wa-autoresponder": "node tests/wa-autoresponder.test.js",
     "kb:build": "node scripts/kb-build.js",
     "kb:seed-operator": "node scripts/kb-seed-operator.js",
     "wa:history": "node -r dotenv/config scripts/wa-web-history-import.js",

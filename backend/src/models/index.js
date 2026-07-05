@@ -19,6 +19,7 @@ const { PhoneEntityLink, LINK_SOURCES, LINK_STATUSES } = require('./PhoneEntityL
 const { FirstContactProposal, FIRST_CONTACT_STATES, FIRST_CONTACT_DECISIONS } = require('./FirstContactProposal');
 const { InboxThreadState } = require('./InboxThreadState');
 const { NewApplicationProposal, NEW_APPLICATION_PROPOSAL_STATUSES } = require('./NewApplicationProposal');
+const { WaAutoReply, WA_AUTOREPLY_DECISIONS, WA_AUTOREPLY_MODES, WA_AUTOREPLY_KINDS } = require('./WaAutoReply');
 
 module.exports = {
   Order,
@@ -32,6 +33,10 @@ module.exports = {
   InboxThreadState,
   NewApplicationProposal,
   NEW_APPLICATION_PROPOSAL_STATUSES,
+  WaAutoReply,
+  WA_AUTOREPLY_DECISIONS,
+  WA_AUTOREPLY_MODES,
+  WA_AUTOREPLY_KINDS,
   Declaration,
   LabCommThread,
   WhatsAppMessage,

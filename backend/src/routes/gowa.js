@@ -12,6 +12,7 @@ const gowa    = require('../integrations/gowaClient');
 const ingest  = require('../services/whatsappIngestService');
 const interest = require('../services/interestDetectionService');
 const firstContact = require('../services/firstContactService');
+const autoResponder = require('../services/whatsappAutoResponderService');
 
 router.post('/', express.raw({ type: '*/*', limit: '5mb' }), async (req, res) => {
   const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body || ''));
@@ -48,6 +49,19 @@ router.post('/', express.raw({ type: '*/*', limit: '5mb' }), async (req, res) =>
           const r = await firstContact.proposeFromChatInterest({ phone: senderPhone, name: p.from_name, context: ctx, detection: det });
           if (r.generated) console.log(`[gowa] лид по интересу: ${senderPhone} (${det.category}) из «${ctx}»`);
         }
+      }
+
+      // Auto-Responder: answer safe, KB-approved questions from a DIRECT client message.
+      // Mode-gated (WA_AUTORESPONDER_MODE=off|shadow|auto, default shadow → sends nothing).
+      // Reads history from whatsapp_messages (web.js-maintained); sends via GOWA. Never throws
+      // up the webhook. Not for groups (guarded inside).
+      if (!isGroup && rawMsg.body) {
+        try {
+          const ar = await autoResponder.handleInbound(rawMsg);
+          if (ar && (ar.decision || ar.skipped)) {
+            console.log(`[gowa] автоответчик от ${rawMsg.from}: ${ar.decision || 'skip:' + ar.skipped}${ar.kind ? ' (' + ar.kind + ')' : ''}`);
+          }
+        } catch (e) { console.error(`[gowa] autoresponder failed: ${e.message}`); }
       }
     } catch (err) {
       console.error(`[gowa] handle failed: ${err.message}`);
