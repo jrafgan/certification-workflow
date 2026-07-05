@@ -83,10 +83,16 @@ test('fresh, no WhatsApp at all → new, send offer', () => {
 // only when the creation date is known (opts.ageDays). It never decides alone.
 const clsAge = (sig, ageDays, decl = null) => svc.classifyApplication(sig, decl, { now: NOW, ageDays });
 
-test('6) engaged, no offer, created >50d ago → old (backstop hides it)', () => {
-  const r = clsAge({ hasOutbound: true, lastOutboundAt: daysAgo(10), lastInboundAt: daysAgo(9), offerSent: false }, 55);
+test('6) engaged, no offer, created >50d ago, client silent → old (backstop hides it)', () => {
+  const r = clsAge({ hasOutbound: true, lastOutboundAt: daysAgo(10), lastInboundAt: daysAgo(40), offerSent: false }, 55);
   assert.strictEqual(r.isNew, false);
   assert.ok(/старше 50 дней/i.test(r.reason));
+});
+
+test('6-active) old + no offer BUT client wrote recently → STAYS new (live lead guard)', () => {
+  const r = clsAge({ hasOutbound: true, lastOutboundAt: daysAgo(10), lastInboundAt: daysAgo(3), offerSent: false }, 55);
+  assert.strictEqual(r.isNew, true);
+  assert.ok(/не отправляли стоимость/i.test(r.reason));
 });
 
 test('6-neg) engaged, no offer, created ≤50d ago → still new (propose the offer)', () => {

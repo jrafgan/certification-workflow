@@ -35,6 +35,10 @@ const NEW_APP_NORESPONSE_DAYS = parseInt(process.env.NEW_APP_NORESPONSE_DAYS, 10
 // «мы ни разу не ответили» защищён отдельным правилом выше). Env: NEW_APP_STALE_DAYS (по умолч. 50).
 const NEW_APP_STALE_DAYS = parseInt(process.env.NEW_APP_STALE_DAYS, 10) || 50;
 
+// Защита живого лида: если клиент писал за последние N дней — возрастной backstop его НЕ прячет
+// (ложное сокрытие активного клиента = потерянный лид). Env: NEW_APP_ACTIVE_DAYS (по умолч. 14).
+const NEW_APP_ACTIVE_DAYS = parseInt(process.env.NEW_APP_ACTIVE_DAYS, 10) || 14;
+
 // weSentCalc(text) — ИСХОДЯЩЕЕ сообщение = коммерческое предложение клиенту: явное КП/счёт
 // (без числа) ИЛИ упоминание стоимости/протокола/итога + число (≥3 цифр). Так агент понимает,
 // отправляли мы клиенту предложение по стоимости или нет.
@@ -63,6 +67,7 @@ function classifyApplication(sig = {}, decl = null, opts = {}) {
   const now = opts.now || Date.now();
   const noResponseDays = opts.noResponseDays || NEW_APP_NORESPONSE_DAYS;
   const staleDays = opts.staleDays || NEW_APP_STALE_DAYS;
+  const activeDays = opts.activeDays || NEW_APP_ACTIVE_DAYS;
   const ageDays = Number.isFinite(opts.ageDays) ? opts.ageDays : null;   // только от даты создания
   const inboundTexts = sig.inboundTexts || [];
   const lastInboundAt = sig.lastInboundAt || null;
@@ -92,7 +97,9 @@ function classifyApplication(sig = {}, decl = null, opts = {}) {
   // 6) Возраст > N дней (backstop): мы вовлекались (хотя бы одно наше сообщение — иначе правило
   //    «ни разу не ответили» выше уже вернуло isNew:true), стоимость не отправляли, дата создания
   //    известна и старше порога → заявка старая. Возраст в одиночку не решает (см. правила 1–5, 7).
-  if (ageDays != null && ageDays > staleDays)
+  //    ГАРД: живого лида (писал за последние activeDays дней) возрастом НЕ прячем.
+  const recentlyActive = lastInboundAt && (now - lastInboundAt) / 86400000 <= activeDays;
+  if (ageDays != null && ageDays > staleDays && !recentlyActive)
     return { isNew: false, reason: `Заявка старше ${staleDays} дней без движения` };
   // Иначе: мы писали, но стоимость ещё не отправляли → предложить отправить
   return { isNew: true, needs_calc_reply: true, reason: 'Клиенту ещё не отправляли стоимость услуг',
