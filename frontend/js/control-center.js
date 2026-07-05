@@ -250,7 +250,7 @@
     // История почты / лаборатории (ищется ТОЛЬКО если клиент в Декларации и статус ≠ «Запустить»).
     const eh = (d.email_history || []).length
       ? (d.email_history || []).map(t =>
-          `<div class="td-eh">${t.needs_reply ? '<span class="tk-tag" style="background:#fee2e2;color:#991b1b">нужен ответ</span> ' : ''}<span class="muted">${bubbleAt(t.at)}</span> ${t.kind === 'lab' ? '🧪 лаборатория' : '✉️ черновик'} · ${esc(t.recipient || '—')} · ${esc(t.status || '')}${t.has_attachment ? ' · 📎' : ''}${t.subject ? ` · ${esc(t.subject)}` : ''}</div>`).join('')
+          `<div class="td-eh">${t.needs_reply ? '<span class="tk-tag" style="background:#fee2e2;color:#991b1b">нужен ответ</span> ' : ''}<span class="muted">${bubbleAt(t.at)}</span> ${t.kind === 'lab' ? '🧪 лаборатория' : t.kind === 'gmail' ? '📧 почта' : '✉️ черновик'} · ${esc(t.recipient || '—')} · ${esc(t.status || '')}${t.has_attachment ? ' · 📎' : ''}${t.subject ? ` · ${esc(t.subject)}` : ''}${t.match_by ? ` <span class="muted">(${esc(t.match_by)})</span>` : ''}</div>`).join('')
       : `<div class="muted">${esc(d.email_search_reason || 'Переписки с лабораторией по этому клиенту не найдено.')}</div>`;
 
     // Предложение агента (всегда есть) — редактируемое, с отправкой в один клик.
