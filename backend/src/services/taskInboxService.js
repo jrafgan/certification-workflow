@@ -669,13 +669,27 @@ async function searchArchive({ q, phone, limit = 60 } = {}, deps = {}) {
 // Reads the form rows via formFieldMapper (the rich mapper the inbox uses) and returns the
 // card fields the operator needs. If several rows share the phone → newest wins, but match_count
 // and the list are returned so the UI can let the operator choose. READ-ONLY.
+let _formCache = { at: 0, header: [], rows: [] };
+const FORM_CACHE_TTL = parseInt(process.env.FORM_CACHE_TTL_MS, 10) || 5 * 60 * 1000;  // 5 мин
+// Read the New-Form rows with a short TTL cache — the Google Sheets round-trip is the slow part of
+// opening a client card (~3–4s). Repeated card opens within the TTL are instant. Test injection
+// (deps.readRows) bypasses the cache.
+async function readFormRowsCached(deps = {}) {
+  if (deps.readRows) return deps.readRows();
+  const now = Date.now();
+  if (now - _formCache.at < FORM_CACHE_TTL && _formCache.rows.length) return { header: _formCache.header, rows: _formCache.rows };
+  const readRows = require('./mockupGenerationService').defaultReadRows;
+  const r = await readRows();
+  _formCache = { at: now, header: r.header || [], rows: r.rows || [] };
+  return { header: _formCache.header, rows: _formCache.rows };
+}
+
 async function applicationCardByPhone(phone, deps = {}) {
   const key = matchKey(phone);
   if (!key) return { found: false };
   const mapper = deps.mapper || require('./formFieldMapper');
-  const readRows = deps.readRows || require('./mockupGenerationService').defaultReadRows;
   let header = [], rows = [];
-  try { ({ header, rows } = await readRows()); } catch (_) { return { found: false, reason: 'read_failed' }; }
+  try { ({ header, rows } = await readFormRowsCached(deps)); } catch (_) { return { found: false, reason: 'read_failed' }; }
 
   const matches = [];
   for (let i = 0; i < rows.length; i++) {
