@@ -52,8 +52,8 @@ test('4-neg) client replied AFTER our message → still new (not "not responding
   assert.strictEqual(r.isNew, true);
 });
 
-test('7) we NEVER replied → new, send offer, NOT hidden (even if old)', () => {
-  const r = cls({ hasOutbound: false, lastInboundAt: daysAgo(60) }, null);
+test('7) we NEVER replied, creation date UNKNOWN → new, send offer, NOT hidden', () => {
+  const r = cls({ hasOutbound: false, lastInboundAt: daysAgo(60) }, null);   // no ageDays → age rule N/A
   assert.strictEqual(r.isNew, true);
   assert.strictEqual(r.needs_calc_reply, true);
   assert.ok(/ни разу не ответил/i.test(r.reason));
@@ -101,8 +101,14 @@ test('6-neg) engaged, no offer, created ≤50d ago → still new (propose the of
   assert.ok(/не отправляли стоимость/i.test(r.reason));
 });
 
-test('6-guard) never replied + created >50d ago → STILL shown (rule 7 beats the age backstop)', () => {
+test('6-guard) never replied + created >50d ago → HIDDEN (operator 2026-07-05: age beats rule 7)', () => {
   const r = clsAge({ hasOutbound: false, lastInboundAt: daysAgo(70) }, 70);
+  assert.strictEqual(r.isNew, false);
+  assert.ok(/старше 50 дней/i.test(r.reason));
+});
+
+test('6-guard-active) never replied + old BUT client wrote within 14d → STILL shown (live-lead guard)', () => {
+  const r = clsAge({ hasOutbound: false, lastInboundAt: daysAgo(5) }, 70);
   assert.strictEqual(r.isNew, true);
   assert.ok(/ни разу не ответил/i.test(r.reason));
 });

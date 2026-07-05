@@ -58,9 +58,10 @@ const CLIENT_PAID_RE = /оплатил|оплачен|перев[её]л|пер�
 function clientSaidPaid(text = '') { return CLIENT_PAID_RE.test(String(text || '')); }
 
 // classifyApplication(sig, decl, opts) → { isNew, reason, recommended_action?, needs_calc_reply? }.
-// PURE. Приоритетный порядок правил (ТЗ 2026-07-04, уточнено 2026-07-05). Возраст —
-// ВСПОМОГАТЕЛЬНЫЙ backstop: применяется ТОЛЬКО когда известна дата создания (opts.ageDays) и лишь
-// после поведенческих проверок; сам по себе решений не принимает. sig = { lastInboundAt,
+// PURE. Приоритетный порядок: 1) в Декларации 2) оплатил 3) отказ 4) не отвечает >30д
+// 6) возраст >50д (СКРЫТЬ даже при «ни разу не ответили» — решение оператора 2026-07-05; гард
+// живого лида) 7) ни разу не ответили → показать+КП 5) КП отправлено → показать. Возраст
+// применяется ТОЛЬКО когда известна дата создания (opts.ageDays). sig = { lastInboundAt,
 // lastOutboundAt, hasOutbound, offerSent, semanticRefused, inboundTexts[] }. decl = запись
 // «Декларации» или null. opts.ageDays = возраст заявки в днях от даты создания (null если неизвестна).
 function classifyApplication(sig = {}, decl = null, opts = {}) {
@@ -87,20 +88,20 @@ function classifyApplication(sig = {}, decl = null, opts = {}) {
   if (hasOutbound && lastOutboundAt && (now - lastOutboundAt) / 86400000 > noResponseDays
       && (!lastInboundAt || lastInboundAt <= lastOutboundAt))
     return { isNew: false, reason: `Клиент не отвечает более ${noResponseDays} дней` };
-  // 7) Мы НИ РАЗУ не ответили → НЕ скрывать, предложить отправить КП (наша недоработка)
+  // 6) Возраст > N дней (backstop, решение оператора 2026-07-05): дата создания известна и старше
+  //    порога → заявка СТАРАЯ, даже если мы «ни разу не ответили» (правило №7 ниже больше не спасает
+  //    от возраста; 50+ дней без движения = мёртвый лид). ГАРД: живого лида (писал за последние
+  //    activeDays дней) возрастом НЕ прячем.
+  const recentlyActive = lastInboundAt && (now - lastInboundAt) / 86400000 <= activeDays;
+  if (ageDays != null && ageDays > staleDays && !recentlyActive)
+    return { isNew: false, reason: `Заявка старше ${staleDays} дней без движения` };
+  // 7) Мы НИ РАЗУ не ответили (и заявка не старше порога) → НЕ скрывать, предложить отправить КП
   if (!hasOutbound)
     return { isNew: true, needs_calc_reply: true, reason: 'Клиенту ни разу не ответили',
              recommended_action: 'Отправить клиенту коммерческое предложение (стоимость услуг)' };
   // 5) КП уже отправлено, клиент ещё в диалоге → остаётся новой, ждём решения
   if (offerSent)
     return { isNew: true, needs_calc_reply: false, reason: 'КП отправлено — ждём решения клиента', recommended_action: null };
-  // 6) Возраст > N дней (backstop): мы вовлекались (хотя бы одно наше сообщение — иначе правило
-  //    «ни разу не ответили» выше уже вернуло isNew:true), стоимость не отправляли, дата создания
-  //    известна и старше порога → заявка старая. Возраст в одиночку не решает (см. правила 1–5, 7).
-  //    ГАРД: живого лида (писал за последние activeDays дней) возрастом НЕ прячем.
-  const recentlyActive = lastInboundAt && (now - lastInboundAt) / 86400000 <= activeDays;
-  if (ageDays != null && ageDays > staleDays && !recentlyActive)
-    return { isNew: false, reason: `Заявка старше ${staleDays} дней без движения` };
   // Иначе: мы писали, но стоимость ещё не отправляли → предложить отправить
   return { isNew: true, needs_calc_reply: true, reason: 'Клиенту ещё не отправляли стоимость услуг',
            recommended_action: 'Предложить оператору отправить клиенту коммерческое предложение' };
