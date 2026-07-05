@@ -247,10 +247,11 @@
     const msgs = (d.messages || []).map(m =>
       `<div class="bub ${m.direction === 'outbound' ? 'out' : 'in'}">${m.is_group ? '<span class="bub-g">группа</span> ' : ''}${esc(m.body)}<span class="bub-at">${bubbleAt(m.at)}</span></div>`).join('') || '<div class="empty">нет сообщений</div>';
 
-    // История почты / лаборатории.
-    const eh = (d.email_history || []).map(t =>
-      `<div class="td-eh"><span class="muted">${bubbleAt(t.at)}</span> ${t.kind === 'lab' ? '🧪 лаборатория' : '✉️ черновик'} · ${esc(t.recipient || '—')} · ${esc(t.status || '')}${t.has_attachment ? ' · 📎' : ''}${t.subject ? ` · ${esc(t.subject)}` : ''}</div>`).join('')
-      || '<div class="muted">Переписки с лабораторией по этому клиенту не найдено.</div>';
+    // История почты / лаборатории (ищется ТОЛЬКО если клиент в Декларации и статус ≠ «Запустить»).
+    const eh = (d.email_history || []).length
+      ? (d.email_history || []).map(t =>
+          `<div class="td-eh">${t.needs_reply ? '<span class="tk-tag" style="background:#fee2e2;color:#991b1b">нужен ответ</span> ' : ''}<span class="muted">${bubbleAt(t.at)}</span> ${t.kind === 'lab' ? '🧪 лаборатория' : '✉️ черновик'} · ${esc(t.recipient || '—')} · ${esc(t.status || '')}${t.has_attachment ? ' · 📎' : ''}${t.subject ? ` · ${esc(t.subject)}` : ''}</div>`).join('')
+      : `<div class="muted">${esc(d.email_search_reason || 'Переписки с лабораторией по этому клиенту не найдено.')}</div>`;
 
     // Предложение агента (всегда есть) — редактируемое, с отправкой в один клик.
     const pr = d.proposed_reply || {};

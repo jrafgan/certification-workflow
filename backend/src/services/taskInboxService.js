@@ -490,9 +490,21 @@ async function thread(phone, deps = {}) {
 
   // Lab / email HISTORY by client NAME (matched_order_id is unreliable — the matcher points at
   // the empty Mongo replica; whatsapp-match-empty-replica-bug). Best-effort.
+  //
+  // ПРАВИЛО ОПЕРАТОРА (2026-07-05): искать письмо на почте ТОЛЬКО если клиент УЖЕ в «Декларации»
+  // И статус НЕ «Запустить» — иначе заказ в лабораторию не отправлен и переписки нет. Экономит
+  // поиск и не путает оператора пустотой.
   const names = [...new Set([ent && ent.legal_entity, ...((ent && ent.orders) || []).map(o => o.client)].filter(Boolean))];
+  const launchedOrders = (ent && ent.in_declaration)
+    ? (ent.orders || []).filter(o => o.status && String(o.status).trim() && String(o.status).trim() !== 'Запустить')
+    : [];
+  const shouldFindEmails = launchedOrders.length > 0;
   let email_history = [];
-  if (names.length) {
+  let email_search_reason = null;
+  if (!ent || !ent.in_declaration) email_search_reason = 'Клиента нет в «Декларации» — писем по заказу пока не ищем.';
+  else if (!shouldFindEmails) email_search_reason = 'Заказ на статусе «Запустить» — в лабораторию ещё не отправлен, писем нет.';
+
+  if (shouldFindEmails && names.length) {
     const [emailDrafts, orders] = await Promise.all([
       safe(EmailDraft.find({ client_name: { $in: names } }).sort({ created_at: -1 }).limit(20).lean(), []),
       safe(Order.find({ $or: [{ 'client.name': { $in: names } }, { 'client.companyName': { $in: names } }] }).select('_id').limit(50).lean(), []),
@@ -500,9 +512,10 @@ async function thread(phone, deps = {}) {
     const orderIds = orders.map(o => o._id);
     const threads = orderIds.length ? await safe(LabCommThread.find({ order_id: { $in: orderIds } }).sort({ created_at: -1 }).limit(20).lean(), []) : [];
     email_history = [
-      ...threads.map(t => ({ kind: 'lab', recipient: t.recipient_email || null, status: t.status || null, at: t.reply_detected_at || t.sent_at || t.created_at || null, has_attachment: !!t.reply_has_attachment })),
-      ...emailDrafts.map(d => ({ kind: 'draft', recipient: d.to_email || null, status: `черновик · ${d.state || ''}`, at: d.created_at || null, subject: d.subject || null })),
+      ...threads.map(t => ({ kind: 'lab', recipient: t.recipient_email || null, status: t.status || null, at: t.reply_detected_at || t.sent_at || t.created_at || null, has_attachment: !!t.reply_has_attachment, needs_reply: t.status === 'reply_received' || t.status === 'awaiting_our_reply' })),
+      ...emailDrafts.map(d => ({ kind: 'draft', recipient: d.to_email || null, status: `черновик · ${d.state || ''}`, at: d.created_at || null, subject: d.subject || null, needs_reply: d.state === 'pending_approval' })),
     ].sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0)).slice(0, 10);
+    if (!email_history.length) email_search_reason = 'Заказ запущен, но письма по нему пока не найдены (проверьте почту лаборатории).';
   }
 
   // AGENT SUGGESTED REPLY (always present): a stored agent draft if one exists, else generated.
@@ -532,6 +545,7 @@ async function thread(phone, deps = {}) {
     days_since_last,                              // ← сколько дней после последнего сообщения
     conversation_summary,                         // ← краткое резюме переписки (агент)
     email_history,
+    email_search_reason,                          // почему писем нет (не в Декларации / статус «Запустить»)
     email_status: email_history[0] || null,     // back-compat: latest item
     proposed_reply,
     recommend_only: true,
