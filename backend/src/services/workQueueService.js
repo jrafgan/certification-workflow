@@ -30,14 +30,23 @@ const DECL_PHONE_COL  = 9;   // J — Номер тел: (primary client ID)
 const DECL_STATUS_COL = 13;  // N — Статус
 
 // defaultReadDeclaration — live, read-only Google Sheets read of «Декларация» data rows.
+// TTL cache — the Declaration read (1044 rows) is on the hot path of the inbox AND every client
+// card (clientEntityService.buildByPhone). One Google Sheets round-trip serves all callers for a
+// few seconds. Env DECL_CACHE_TTL_MS (default 30s — Декларация меняется оператором, держим свежо).
+let _declCache = { at: 0, rows: null };
+const DECL_CACHE_TTL = parseInt(process.env.DECL_CACHE_TTL_MS, 10) || 30 * 1000;
 async function defaultReadDeclaration() {
+  const now = Date.now();
+  if (_declCache.rows && now - _declCache.at < DECL_CACHE_TTL) return _declCache.rows;
   const { google } = require('googleapis');
   const auth = new google.auth.GoogleAuth({ keyFile: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
   const sheets = google.sheets({ version: 'v4', auth });
   const tab = process.env.DECLARATION_SHEET_NAME || 'Лист1';
   const a1 = /^[A-Za-z0-9_]+$/.test(tab) ? tab : `'${tab.replace(/'/g, "''")}'`;
   const res = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.DECLARATION_SHEET_ID, range: `${a1}!A1:V2000` });
-  return (res.data.values || []).slice(1);                    // data rows (skip header)
+  const rows = (res.data.values || []).slice(1);              // data rows (skip header)
+  _declCache = { at: now, rows };
+  return rows;
 }
 
 // ─── Phones present in «Декларация» with a real status (= launched) ─────────────
