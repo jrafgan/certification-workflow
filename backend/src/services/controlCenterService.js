@@ -620,6 +620,11 @@ async function taskInbox() {
   const r = await require('./taskInboxService').tasks();
   return { db_connected: true, ...r };
 }
+async function clientEmails(phone) {
+  if (!connected()) return { db_connected: false, emails: [] };
+  const r = await require('./taskInboxService').clientEmails(phone);
+  return { db_connected: true, ...r };
+}
 async function taskThread(phone) {
   if (!connected()) return { db_connected: false };
   const r = await require('./taskInboxService').thread(phone);
@@ -673,5 +678,5 @@ module.exports = {
   orderDangers, orderTimelineSteps, attention, orderTimeline, orderWorkspace, attentionCenter,
   // task inbox (WhatsApp-style to-do)
   taskInbox, taskThread, markThread, waSearch, markApplication, reopenApplication,
-  autoReplies,
+  autoReplies, clientEmails,
 };

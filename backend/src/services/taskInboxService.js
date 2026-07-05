@@ -511,26 +511,10 @@ async function thread(phone, deps = {}) {
     ]);
     const orderIds = orders.map(o => o._id);
     const threads = orderIds.length ? await safe(LabCommThread.find({ order_id: { $in: orderIds } }).sort({ created_at: -1 }).limit(20).lean(), []) : [];
-    // DIRECT Gmail search by client name — finds the actual lab thread even when the Mongo
-    // Order/LabCommThread replica is empty (email-tasks-empty-orders). The lab mailbox carries the
-    // client name in the SUBJECT (оператор: имя клиента = тема). Best-effort; Gmail may be offline.
-    const gmailHits = await safe((async () => {
-      const gmail = deps.gmail || require('../integrations/gmailClient');
-      const q = names.map(n => `"${String(n).replace(/"/g, '')}"`).join(' OR ');
-      const found = await gmail.searchThreads(q, 6);
-      return (found || []).map(t => ({
-        kind: 'gmail', recipient: t.from || t.to || null, status: 'письмо в почте',
-        at: t.date || null, has_attachment: !!t.hasAttachment, subject: t.subject || null,
-        thread_id: t.threadId, match_by: 'имя/тема', needs_reply: null,
-      }));
-    })(), []);
-
     email_history = [
       ...threads.map(t => ({ kind: 'lab', recipient: t.recipient_email || null, status: t.status || null, at: t.reply_detected_at || t.sent_at || t.created_at || null, has_attachment: !!t.reply_has_attachment, needs_reply: t.status === 'reply_received' || t.status === 'awaiting_our_reply' })),
       ...emailDrafts.map(d => ({ kind: 'draft', recipient: d.to_email || null, status: `черновик · ${d.state || ''}`, at: d.created_at || null, subject: d.subject || null, needs_reply: d.state === 'pending_approval' })),
-      ...gmailHits,
     ].sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0)).slice(0, 10);
-    if (!email_history.length) email_search_reason = 'Заказ запущен, но письма по нему пока не найдены (проверьте почту лаборатории).';
   }
 
   // AGENT SUGGESTED REPLY (always present): a stored agent draft if one exists, else generated.
@@ -561,10 +545,48 @@ async function thread(phone, deps = {}) {
     conversation_summary,                         // ← краткое резюме переписки (агент)
     email_history,
     email_search_reason,                          // почему писем нет (не в Декларации / статус «Запустить»)
+    email_lazy: shouldFindEmails,                 // фронт дозагрузит письма из Gmail отдельным запросом
+    client_names: names,
     email_status: email_history[0] || null,     // back-compat: latest item
     proposed_reply,
     recommend_only: true,
   };
+}
+
+// ─── Lazy: DIRECT Gmail search for a client's lab email (slow → separate from thread()) ──────
+// Same operator gate as thread(): only when the client is in «Декларация» with status ≠ «Запустить».
+// Searches the lab mailbox by client name (name = subject) via gmailClient. Best-effort. Called by
+// the panel AFTER the card renders, so an 8s Gmail round-trip never blocks the card. READ-ONLY.
+async function clientEmails(phone, deps = {}) {
+  const key = matchKey(phone);
+  if (!key) return { found: false, reason: 'bad_phone', emails: [] };
+  const entity = await (async () => { try { return await require('./clientEntityService').buildByPhone(phone); } catch (_) { return null; } })();
+  const ent = entity && entity.found ? entity : null;
+  if (!ent || !ent.in_declaration)
+    return { found: false, reason: 'Клиента нет в «Декларации» — писем по заказу не ищем.', emails: [] };
+  const launched = (ent.orders || []).some(o => o.status && String(o.status).trim() && String(o.status).trim() !== 'Запустить');
+  if (!launched)
+    return { found: false, reason: 'Заказ на статусе «Запустить» — в лабораторию ещё не отправлен.', emails: [] };
+
+  const names = [...new Set([ent.legal_entity, ...(ent.orders || []).map(o => o.client)].filter(Boolean))];
+  if (!names.length) return { found: false, reason: 'Имя клиента не определено.', emails: [] };
+
+  try {
+    const gmail = deps.gmail || require('../integrations/gmailClient');
+    const q = names.map(n => `"${String(n).replace(/"/g, '')}"`).join(' OR ');
+    const found = await gmail.searchThreads(q, 6);
+    const emails = (found || []).map(t => ({
+      kind: 'gmail', from: t.from || null, to: t.to || null, subject: t.subject || null,
+      at: t.date || null, has_attachment: !!t.hasAttachment, thread_id: t.threadId,
+      message_count: t.messageCount || 0, match_by: 'имя клиента = тема',
+    })).sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
+    return {
+      found: emails.length > 0, emails, searched_names: names,
+      reason: emails.length ? null : 'Заказ запущен, но письма в почте по имени клиента не найдены.',
+    };
+  } catch (e) {
+    return { found: false, reason: 'Почта недоступна: ' + e.message, emails: [] };
+  }
 }
 
 // ─── DB: operator UI-state mutation (read / done / snooze) — the ONLY write ──────
@@ -716,4 +738,4 @@ function conversationSummary(messages = [], opts = {}) {
   return parts.join(' ');
 }
 
-module.exports = { buildTasks, threadKey, waName, declIndexFromRows, declNameIndexFromRows, normClientName, proposeReply, fmtSom, isRefused, clientSaidPaid, weSentCalc, classifyApplication, tasks, thread, markThread, searchArchive, appKeyFor, markApplication, reopenApplication, applicationCardByPhone, conversationSummary };
+module.exports = { buildTasks, threadKey, waName, declIndexFromRows, declNameIndexFromRows, normClientName, proposeReply, fmtSom, isRefused, clientSaidPaid, weSentCalc, classifyApplication, tasks, thread, markThread, searchArchive, appKeyFor, markApplication, reopenApplication, applicationCardByPhone, conversationSummary, clientEmails };

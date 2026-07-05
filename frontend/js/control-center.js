@@ -280,7 +280,16 @@
       <div class="td-thread">${msgs}</div>
       <div class="td-sec-h">Почта / лаборатория</div>
       <div class="td-eh-list">${eh}</div>
+      ${d.email_lazy ? '<div id="td-gmail" class="muted" style="margin-top:6px">🔎 ищу письма клиента в почте…</div>' : ''}
     </div>`;
+  }
+  async function loadClientEmails(phone) {
+    const host = document.getElementById('td-gmail'); if (!host) return;
+    let r; try { r = await getJSON(api('/client-emails?phone=' + encodeURIComponent(phone))); } catch (_) { host.innerHTML = '<span class="muted">Почта недоступна.</span>'; return; }
+    if (!r || !r.emails || !r.emails.length) { host.innerHTML = `<span class="muted">${esc((r && r.reason) || 'Писем в почте не найдено.')}</span>`; return; }
+    host.className = '';
+    host.innerHTML = '<div class="td-sec-h">Письма в почте (найдены по имени клиента)</div>' + r.emails.map(e =>
+      `<div class="td-eh">📧 <span class="muted">${e.at ? new Date(e.at).toLocaleString('ru-RU') : ''}</span> · ${esc(e.subject || '(без темы)')}${e.has_attachment ? ' · 📎' : ''} · от ${esc((e.from || '').replace(/<.*>/, '').slice(0, 40))} <span class="muted">(${esc(e.match_by || '')})</span></div>`).join('');
   }
   async function openThread(phone) {
     const pane = $('#task-detail'); pane.innerHTML = '<div class="muted">загрузка…</div>';
@@ -289,6 +298,7 @@
     pane.innerHTML = renderThread(d);
     if (d.proposed_reply && d.proposed_reply.draft_id) lastItems = [{ type: 'lead_message', id: d.proposed_reply.draft_id, title: 'Ответ клиенту ' + (phone || '') }];
     postJSON(api('/thread/seen'), { phone, action: 'seen' }).catch(() => {}); // mark read
+    if (d.email_lazy) loadClientEmails(phone);     // медленный Gmail-поиск — после рендера карточки
   }
   // «🤖 Черновик ИИ» — LLM-ответ клиенту с учётом «Декларации» + истории WhatsApp; кладём в поле.
   document.addEventListener('click', async e => {

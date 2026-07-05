@@ -40,6 +40,8 @@ router.get('/thread', async (req, res, next) => { try { res.json(await cc.taskTh
 router.get('/wa-search', async (req, res, next) => { try { res.json(await cc.waSearch({ q: req.query.q, phone: req.query.phone, limit: req.query.limit })); } catch (e) { next(e); } });
 // Авто-ответчик: решения агента для проверки оператором (перед включением реальной отправки).
 router.get('/autoreplies', async (req, res, next) => { try { res.json(await cc.autoReplies({ limit: req.query.limit ? parseInt(req.query.limit, 10) : 80, decision: req.query.decision })); } catch (e) { next(e); } });
+// Ленивый Gmail-поиск писем клиента (медленный → отдельно от карточки).
+router.get('/client-emails', async (req, res, next) => { try { res.json(await cc.clientEmails(req.query.phone)); } catch (e) { next(e); } });
 // Неотвеченные письма — живой список цепочек Gmail, где мы так и не ответили (последнее
 // сообщение не от нас). Показывает тему, текст и файл последнего сообщения.
 router.get('/emails-unanswered', async (req, res, next) => {
