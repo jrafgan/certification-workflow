@@ -89,10 +89,12 @@ test('6) engaged, no offer, created >50d ago, client silent → old (backstop hi
   assert.ok(/старше 50 дней/i.test(r.reason));
 });
 
-test('6-active) old + no offer BUT client wrote recently → STAYS new (live lead guard)', () => {
+test('6-active) old (>50d) EVEN IF client wrote recently → HIDDEN (hard cutoff; guard removed 2026-07-05 вечер)', () => {
+  // The active client is NOT lost — they still surface as a WhatsApp thread; we just drop the
+  // duplicate stale «new application» card. Operator asked for a hard age cutoff.
   const r = clsAge({ hasOutbound: true, lastOutboundAt: daysAgo(10), lastInboundAt: daysAgo(3), offerSent: false }, 55);
-  assert.strictEqual(r.isNew, true);
-  assert.ok(/не отправляли стоимость/i.test(r.reason));
+  assert.strictEqual(r.isNew, false);
+  assert.ok(/старше 50 дней/i.test(r.reason));
 });
 
 test('6-neg) engaged, no offer, created ≤50d ago → still new (propose the offer)', () => {
@@ -107,10 +109,10 @@ test('6-guard) never replied + created >50d ago → HIDDEN (operator 2026-07-05:
   assert.ok(/старше 50 дней/i.test(r.reason));
 });
 
-test('6-guard-active) never replied + old BUT client wrote within 14d → STILL shown (live-lead guard)', () => {
+test('6-guard-active) never replied + old (>50d) even if client wrote within 14d → HIDDEN (hard cutoff)', () => {
   const r = clsAge({ hasOutbound: false, lastInboundAt: daysAgo(5) }, 70);
-  assert.strictEqual(r.isNew, true);
-  assert.ok(/ни разу не ответил/i.test(r.reason));
+  assert.strictEqual(r.isNew, false);
+  assert.ok(/старше 50 дней/i.test(r.reason));
 });
 
 test('6-noDate) engaged, no offer, creation date UNKNOWN → age not applied, stays new', () => {
@@ -118,10 +120,11 @@ test('6-noDate) engaged, no offer, creation date UNKNOWN → age not applied, st
   assert.strictEqual(r.isNew, true);
 });
 
-test('6-offer) offer already sent wins over the age backstop → stays new (ждём решения)', () => {
+test('6-offer) age backstop wins over «offer already sent» → old app HIDDEN (hard cutoff)', () => {
+  // Age is checked before the offer rule: >50d is hidden even if we already sent a quote.
   const r = clsAge({ hasOutbound: true, lastOutboundAt: daysAgo(10), lastInboundAt: daysAgo(9), offerSent: true }, 60);
-  assert.strictEqual(r.isNew, true);
-  assert.strictEqual(r.needs_calc_reply, false);
+  assert.strictEqual(r.isNew, false);
+  assert.ok(/старше 50 дней/i.test(r.reason));
 });
 
 console.log('\n[buildTasks integration]');

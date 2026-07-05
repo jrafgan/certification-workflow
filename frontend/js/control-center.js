@@ -21,7 +21,8 @@
     el.className = 'db ' + (connected === true ? 'ok' : connected === false ? 'off' : 'unknown');
     el.textContent = connected === true ? 'База подключена' : connected === false ? 'База недоступна' : 'База ?';
   }
-  async function getJSON(url) { const r = await fetch(url); if (r.status === 401) { location.href = '/app/login.html'; throw new Error('unauth'); } return r.json(); }
+  // cache:'no-store' — всегда свежие данные с бэкенда, никакого кэша браузера при обновлении страницы.
+  async function getJSON(url) { const r = await fetch(url, { cache: 'no-store' }); if (r.status === 401) { location.href = '/app/login.html'; throw new Error('unauth'); } return r.json(); }
   async function postJSON(url, body) {
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (r.status === 401) { location.href = '/app/login.html'; throw new Error('unauth'); }
@@ -749,7 +750,7 @@
   // ── инициализация: проверка входа ───────────────────────────────────────
   (async function init() {
     let res;
-    try { res = await fetch('/api/auth/me'); } catch (_) { location.href = '/app/login.html'; return; }
+    try { res = await fetch('/api/auth/me', { cache: 'no-store' }); } catch (_) { location.href = '/app/login.html'; return; }
     if (!res.ok) { location.href = '/app/login.html'; return; }
     me = (await res.json()).user;
     $('#whoami').textContent = `${me.display_name} · ${me.role === 'administrator' ? 'Администратор' : 'Оператор'}`;

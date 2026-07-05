@@ -54,6 +54,9 @@ app.get('/', (_req, res) => res.redirect('/app/control-center.html'));
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 const { requireAuth } = require('./middleware/auth');
+// No caching of API responses — the panel must always get FRESH data on every page refresh
+// (a stale cached /tasks was showing old LID numbers / >50d applications after a fix).
+app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 app.use('/api/auth', require('./routes/auth')); // public: login / logout / me
 app.use('/api', requireAuth, routes);           // everything else requires a logged-in user
 

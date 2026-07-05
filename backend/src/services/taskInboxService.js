@@ -68,7 +68,6 @@ function classifyApplication(sig = {}, decl = null, opts = {}) {
   const now = opts.now || Date.now();
   const noResponseDays = opts.noResponseDays || NEW_APP_NORESPONSE_DAYS;
   const staleDays = opts.staleDays || NEW_APP_STALE_DAYS;
-  const activeDays = opts.activeDays || NEW_APP_ACTIVE_DAYS;
   const ageDays = Number.isFinite(opts.ageDays) ? opts.ageDays : null;   // только от даты создания
   const inboundTexts = sig.inboundTexts || [];
   const lastInboundAt = sig.lastInboundAt || null;
@@ -88,13 +87,12 @@ function classifyApplication(sig = {}, decl = null, opts = {}) {
   if (hasOutbound && lastOutboundAt && (now - lastOutboundAt) / 86400000 > noResponseDays
       && (!lastInboundAt || lastInboundAt <= lastOutboundAt))
     return { isNew: false, reason: `Клиент не отвечает более ${noResponseDays} дней` };
-  // 6) Возраст > N дней (backstop, решение оператора 2026-07-05): дата создания известна и старше
-  //    порога → заявка СТАРАЯ, даже если мы «ни разу не ответили» (правило №7 ниже больше не спасает
-  //    от возраста; 50+ дней без движения = мёртвый лид). ГАРД: живого лида (писал за последние
-  //    activeDays дней) возрастом НЕ прячем.
-  const recentlyActive = lastInboundAt && (now - lastInboundAt) / 86400000 <= activeDays;
-  if (ageDays != null && ageDays > staleDays && !recentlyActive)
-    return { isNew: false, reason: `Заявка старше ${staleDays} дней без движения` };
+  // 6) ЖЁСТКИЙ отсеч по возрасту (решение оператора 2026-07-05, уточнено вечером): дата создания
+  //    старше порога → заявка СТАРАЯ и НЕ показывается как новая, ДАЖЕ если клиент писал недавно.
+  //    Прежний «гард живого лида» УБРАН по требованию оператора: активный клиент не теряется —
+  //    он всё равно виден как WhatsApp-тред (задача «клиент»), просто без дубля-карточки заявки.
+  if (ageDays != null && ageDays > staleDays)
+    return { isNew: false, reason: `Заявка старше ${staleDays} дней` };
   // 7) Мы НИ РАЗУ не ответили (и заявка не старше порога) → НЕ скрывать, предложить отправить КП
   if (!hasOutbound)
     return { isNew: true, needs_calc_reply: true, reason: 'Клиенту ни разу не ответили',
