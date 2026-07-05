@@ -47,7 +47,7 @@ async function resolveContact(msg) {
 // startClient({ onIncoming, onReady }) — boots the client, wires events, returns it.
 // onIncoming(raw) is called for every received (non-self) message; raw matches the
 // whatsappIngestService shape: { id, from, contact, body, timestamp(sec), fromMe, attachments }.
-async function startClient({ onIncoming, onReady } = {}) {
+async function startClient({ onIncoming, onReady, onQr } = {}) {
   const { Client, LocalAuth } = require('whatsapp-web.js'); // lazy — keeps Puppeteer out of app/tests
   const qrcode = require('qrcode-terminal');
 
@@ -63,7 +63,7 @@ async function startClient({ onIncoming, onReady } = {}) {
     },
   });
 
-  client.on('qr', (qr) => { log('qr', { hint: 'Отсканируйте QR номером 507391773 (WhatsApp → Связанные устройства)' }); qrcode.generate(qr, { small: true }); });
+  client.on('qr', (qr) => { log('qr', { hint: 'Отсканируйте QR номером 507391773 (WhatsApp → Связанные устройства)' }); qrcode.generate(qr, { small: true }); if (typeof onQr === 'function') { try { onQr(qr); } catch (_) {} } });
   client.on('authenticated', () => log('authenticated', {}));
   client.on('auth_failure', (m) => log('auth_failure', { message: String(m) }));
   client.on('ready', () => { log('ready', { session: SESSION_PATH }); if (typeof onReady === 'function') onReady(client); });
