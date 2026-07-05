@@ -113,6 +113,35 @@ function declIndexFromRows(rows = []) {
   return idx;
 }
 
+// normClientName — нормализованный ключ имени клиента для матча заявки с Декларацией по ИМЕНИ
+// (телефон в Декларации ненадёжен — order-identity-model). Возвращает null для слишком общих
+// имён (голый орг-префикс «ИП»/«ОсОО» / пусто), чтобы не хватать ложные совпадения.
+const ORG_PREFIX_RE = /^(ип|осоо|оосо|ооо|чп|оао|зао|тоо)[\s.]*/i;
+function normClientName(s = '') {
+  const t = String(s || '').toLowerCase().replace(/[^0-9a-zа-яё\s]/gi, ' ').replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  const core = t.replace(ORG_PREFIX_RE, '').trim();
+  if (core.length < 3) return null;               // «ип» / слишком общее → не матчим
+  return t;
+}
+
+// declNameIndexFromRows — normClientName(col D) → { client, status, count, paid, debt }.
+// Параллельно declIndexFromRows (по телефону), но по ИМЕНИ — ловит клиента в Декларации, когда
+// его телефон не совпал с заявкой.
+function declNameIndexFromRows(rows = []) {
+  const idx = {};
+  for (const r of rows) {
+    const nk = normClientName(r[DECL_CLIENT_COL]);
+    if (!nk) continue;
+    const status = String(r[DECL_STATUS_COL] || '').trim() || null;
+    const pay = parsePayment(r[DECL_PAYMENT_COL]);
+    const e = idx[nk] || (idx[nk] = { client: String(r[DECL_CLIENT_COL] || '').trim() || null, status: null, count: 0, paid: 0, debt: 0 });
+    e.count += 1; e.paid += pay.paid; e.debt += pay.debt;
+    if (status) e.status = status;
+  }
+  return idx;
+}
+
 // fmtSom — thousands separator for money shown to the operator (15000 → "15 000").
 function fmtSom(n) { return String(n || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
 
@@ -157,6 +186,7 @@ function buildTasks(input = {}) {
   const labEmails = Array.isArray(input.labEmails) ? input.labEmails : [];
   const newApplications = Array.isArray(input.newApplications) ? input.newApplications : [];
   const declByPhone = input.declByPhone || {};   // phone_key → { client, status, count } (live sheet)
+  const declByName = input.declByName || {};     // normClientName → { client, status, count } (name fallback)
   // phone_key'и, которые смысловой классификатор (LLM точечно) распознал как отказ — считаются
   // отдельно и передаются готовыми, чтобы buildTasks оставалась ЧИСТОЙ (без LLM/I-O).
   const semanticRefused = input.semanticRefusedKeys instanceof Set
@@ -259,7 +289,14 @@ function buildTasks(input = {}) {
   let hiddenNewApps = 0;
   for (const a of newApplications) {
     const pk = a.phone ? matchKey(a.phone) : '';
-    const decl = pk ? (declByPhone[pk] || null) : null;
+    let decl = pk ? (declByPhone[pk] || null) : null;
+    if (!decl) {
+      // Fallback: match by CLIENT NAME (Declaration phone unreliable — order-identity-model).
+      // Ловит клиента, который уже в Декларации, но его телефон не совпал с заявкой → не показываем
+      // его ложно как «новую заявку».
+      const nk = normClientName(a.legal_entity) || normClientName(a.applicant);
+      if (nk) decl = declByName[nk] || null;
+    }
     const s = sigFor(pk);
     const verdict = classifyApplication({ ...s, semanticRefused: pk && semanticRefused.has(pk) }, decl, { now });
     if (!verdict.isNew) { hiddenNewApps++; continue; }
@@ -325,6 +362,7 @@ async function tasks(deps = {}) {
   }));
 
   const declByPhone = declIndexFromRows(declRows || []);
+  const declByName = declNameIndexFromRows(declRows || []);   // name fallback when phone doesn't match
 
   // WhatsApp-сигналы по номерам новых заявок (ОБЕ стороны) — чтобы решить «новая/старая»:
   // отвечали ли мы клиенту, отправляли ли просчёт (сумму/протоколы), когда он писал последний раз.
@@ -369,7 +407,7 @@ async function tasks(deps = {}) {
 
   return buildTasks({
     waMessages, threadStates, labEmails, newApplications: newApps || [],
-    declByPhone, semanticRefusedKeys, waSignalsByKey, now: Date.now(),
+    declByPhone, declByName, semanticRefusedKeys, waSignalsByKey, now: Date.now(),
   });
 }
 
@@ -480,4 +518,4 @@ async function searchArchive({ q, phone, limit = 60 } = {}, deps = {}) {
   }));
 }
 
-module.exports = { buildTasks, threadKey, waName, declIndexFromRows, proposeReply, fmtSom, isRefused, clientSaidPaid, weSentCalc, classifyApplication, tasks, thread, markThread, searchArchive };
+module.exports = { buildTasks, threadKey, waName, declIndexFromRows, declNameIndexFromRows, normClientName, proposeReply, fmtSom, isRefused, clientSaidPaid, weSentCalc, classifyApplication, tasks, thread, markThread, searchArchive };

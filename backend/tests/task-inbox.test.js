@@ -4,7 +4,7 @@
 // Run: node tests/task-inbox.test.js
 
 const assert = require('assert');
-const { buildTasks, threadKey, declIndexFromRows, proposeReply } = require('../src/services/taskInboxService');
+const { buildTasks, threadKey, declIndexFromRows, declNameIndexFromRows, normClientName, proposeReply } = require('../src/services/taskInboxService');
 const { parsePayment } = require('../src/services/clientEntityService');
 const { parseFormDate } = require('../src/services/formFieldMapper');
 
@@ -146,6 +146,45 @@ test('new application with only a submission date → shown, age_days set, needs
   assert.ok(t, 'date-only application is still shown');
   assert.strictEqual(t.age_days, 40);
   assert.strictEqual(t.needs_calc_reply, true);
+});
+
+test('normClientName normalizes and rejects bare org-prefix / too-general names', () => {
+  assert.strictEqual(normClientName('ИП Петров А.А.'), 'ип петров а а'); // punctuation → spaces
+  assert.strictEqual(normClientName('  ОсОО   Ромашка '), 'осоо ромашка');
+  assert.strictEqual(normClientName('ИП'), null);      // bare org prefix → no false match
+  assert.strictEqual(normClientName('ООО'), null);
+  assert.strictEqual(normClientName(''), null);
+  assert.strictEqual(normClientName('   '), null);
+});
+
+test('declNameIndexFromRows keys the Declaration by normalized client name', () => {
+  const row = (client, phone, status) => { const r = []; r[3] = client; r[9] = phone; r[13] = status; return r; };
+  const idx = declNameIndexFromRows([
+    row('ИП Петров', '996700000111', 'Ждем макет'),
+    row('ИП Петров', '0555000000', 'На согласовании'), // same name, 2nd order
+    row('ИП', '996700000999', 'x'),                     // bare prefix → skipped
+  ]);
+  assert.ok(idx['ип петров']);
+  assert.strictEqual(idx['ип петров'].count, 2);
+  assert.strictEqual(idx['ип петров'].status, 'На согласовании'); // last non-empty
+  assert.strictEqual(idx['ип'], undefined);                       // too-general name not indexed
+});
+
+test('new application hidden when NAME matches Declaration even if phone does not', () => {
+  const row = (client, phone, status) => { const r = []; r[3] = client; r[9] = phone; r[13] = status; return r; };
+  // Client is in the Declaration under phone A, but the application arrives from phone B.
+  const declByName = declNameIndexFromRows([row('ОсОО Ромашка', '996700000111', 'Ждем макет')]);
+  const newApplications = [{ sheet_row: 77, applicant: 'Иван', legal_entity: 'ОсОО Ромашка', phone: '996555222333' }];
+  const { tasks } = buildTasks({ newApplications, declByName, now: NOW });
+  assert.strictEqual(tasks.find(t => t.sheet_row === 77), undefined); // hidden — already in Declaration
+});
+
+test('name fallback does NOT hide a genuinely new client (no name match)', () => {
+  const row = (client, phone, status) => { const r = []; r[3] = client; r[9] = phone; r[13] = status; return r; };
+  const declByName = declNameIndexFromRows([row('ОсОО Ромашка', '996700000111', 'Ждем макет')]);
+  const newApplications = [{ sheet_row: 88, applicant: 'Пётр', legal_entity: 'ИП Новый', phone: '996555222444' }];
+  const { tasks } = buildTasks({ newApplications, declByName, now: NOW });
+  assert.ok(tasks.find(t => t.sheet_row === 88)); // shown — not in Declaration
 });
 
 test('threadKey falls back through phone_key → lid_key → normalized phone', () => {
