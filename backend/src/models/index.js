@@ -20,6 +20,7 @@ const { FirstContactProposal, FIRST_CONTACT_STATES, FIRST_CONTACT_DECISIONS } = 
 const { InboxThreadState } = require('./InboxThreadState');
 const { NewApplicationProposal, NEW_APPLICATION_PROPOSAL_STATUSES } = require('./NewApplicationProposal');
 const { WaAutoReply, WA_AUTOREPLY_DECISIONS, WA_AUTOREPLY_MODES, WA_AUTOREPLY_KINDS } = require('./WaAutoReply');
+const { ApplicationOverride, APPLICATION_OVERRIDE_REASONS, APPLICATION_OVERRIDE_STATUSES } = require('./ApplicationOverride');
 
 module.exports = {
   Order,
@@ -37,6 +38,9 @@ module.exports = {
   WA_AUTOREPLY_DECISIONS,
   WA_AUTOREPLY_MODES,
   WA_AUTOREPLY_KINDS,
+  ApplicationOverride,
+  APPLICATION_OVERRIDE_REASONS,
+  APPLICATION_OVERRIDE_STATUSES,
   Declaration,
   LabCommThread,
   WhatsAppMessage,

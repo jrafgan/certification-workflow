@@ -302,11 +302,28 @@
       const staleWarn = t.stale
         ? `<div class="td-info" style="background:#fef2f2;border-color:#fecaca;color:#991b1b">⚠ Заявке ${esc(String(t.age_days))} дн. — возможно, клиент уже отказался. Стоит уточнить актуальность перед просчётом.</div>`
         : '';
+      const reasons = [
+        ['already_replied', 'Уже ответили'], ['not_relevant', 'Не актуальна'],
+        ['duplicate', 'Дубликат'], ['already_client', 'Уже клиент / есть заказ'],
+        ['handled_offline', 'Обработана вне системы'], ['spam_wrong', 'Спам / не тот номер'],
+        ['other', 'Другое'],
+      ];
+      const markBox = `<div class="td-info" style="margin-top:10px">
+        <b>Не новая?</b> Отметьте — агент запомнит и уберёт из списка.
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+          <select id="app-reason" style="flex:1;min-width:160px">${reasons.map(r => `<option value="${r[0]}">${r[1]}</option>`).join('')}</select>
+          <input id="app-note" placeholder="заметка (необязательно)" style="flex:2;min-width:160px"/>
+        </div>
+        <button class="btn-approve" style="margin-top:8px"
+          data-app-mark="1" data-phone="${esc(t.phone || '')}" data-row="${esc(String(t.sheet_row == null ? '' : t.sheet_row))}" data-name="${esc(t.client_name || '')}">
+          Отметить: не новая</button>
+      </div>`;
       pane.innerHTML = `<div class="td"><div class="td-head"><b>Новая заявка без просчёта</b></div>
         <div class="td-info"><b>Заявка создана:</b> ${esc(dateRu)}${t.age_days != null ? ` · ${esc(String(t.age_days))} дн. назад` : ''}</div>
         ${staleWarn}
         <p class="muted">Строка формы: ${esc(ds.row || '—')}. Подготовьте макет и расчёт в очереди заявок.</p>
-        <button class="btn-approve" data-goto="dashboard">Открыть очередь заявок</button></div>`;
+        <button class="btn-approve" data-goto="dashboard">Открыть очередь заявок</button>
+        ${markBox}</div>`;
     }
   }
   $('#tasks-list').addEventListener('click', e => { const row = e.target.closest('.tk'); if (row) openTask(row.dataset); });
@@ -316,6 +333,15 @@
     if (done) { await postJSON(api('/thread/seen'), { phone: done.dataset.donePhone, action: 'done' }); toast('Отмечено «Готово»'); $('#task-detail').innerHTML = '<div class="td-empty">Выберите задачу слева.</div>'; loadTasks(); return; }
     const sn = e.target.closest('[data-snooze-phone]');
     if (sn) { await postJSON(api('/thread/seen'), { phone: sn.dataset.snoozePhone, action: 'snooze' }); toast('Отложено на 24 ч'); loadTasks(); return; }
+    const am = e.target.closest('[data-app-mark]');
+    if (am) {
+      const reason = ($('#app-reason') || {}).value || 'other';
+      const note = (($('#app-note') || {}).value || '').trim();
+      const r = await postJSON(api('/applications/mark'), { phone: am.dataset.phone, sheet_row: am.dataset.row, client_name: am.dataset.name, reason, note });
+      if (r && r.ok) { toast('Заявка отмечена как не новая ✓'); $('#task-detail').innerHTML = '<div class="td-empty">Выберите задачу слева.</div>'; loadTasks(); }
+      else { toast('Не удалось отметить (нужен телефон или строка формы)'); }
+      return;
+    }
   });
 
   // ── 1. Главная: очередь внимания (критические проблемы + приоритетная очередь) ──

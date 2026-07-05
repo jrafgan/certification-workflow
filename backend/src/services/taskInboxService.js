@@ -214,6 +214,9 @@ function buildTasks(input = {}) {
   const semanticRefused = input.semanticRefusedKeys instanceof Set
     ? input.semanticRefusedKeys : new Set(input.semanticRefusedKeys || []);
   const now = input.now || Date.now();
+  // Operator overrides for new applications (phone_key or `row:<n>` → { status, reason, ... }).
+  const applicationOverrides = input.applicationOverrides instanceof Map
+    ? input.applicationOverrides : new Map(Object.entries(input.applicationOverrides || {}));
 
   const tasks = [];
 
@@ -320,12 +323,20 @@ function buildTasks(input = {}) {
       if (nk) decl = declByName[nk] || null;
     }
     const s = sigFor(pk);
-    // Возраст ТОЛЬКО от реальной даты создания заявки (для backstop-правила №6). Нет даты → null,
-    // возрастом не пользуемся (у формы часто нет timestamp — real-applications-source).
-    const subMs = a.submitted_at ? Date.parse(a.submitted_at) : null;
+    // Operator override wins over the agent's guess: if a person marked this application
+    // «не новая» (already replied / not relevant / …), never show it as new. Highest priority.
+    // Keyed by phone (canonical) OR the form row when the phone is missing/unmatchable.
+    const rowKey = (a.sheet_row ?? a.row) != null ? `row:${a.sheet_row ?? a.row}` : null;
+    const override = (pk && applicationOverrides.get(pk)) || (rowKey && applicationOverrides.get(rowKey)) || null;
+    if (override && override.status === 'not_new') { hiddenNewApps++; continue; }
+
+    // Возраст от реальной даты создания заявки (колонка 0 формы) — для backstop-правила №6.
+    const subMs = a.submitted_at ? new Date(a.submitted_at).getTime() : null;
     const ageDays = Number.isFinite(subMs) ? Math.floor((now - subMs) / 86400000) : null;
     const verdict = classifyApplication({ ...s, semanticRefused: pk && semanticRefused.has(pk) }, decl, { now, ageDays });
     if (!verdict.isNew) { hiddenNewApps++; continue; }
+    const staleDays = parseInt(process.env.NEW_APP_STALE_DAYS, 10) || 50;
+    const isStale = ageDays != null && ageDays > staleDays;   // shown only when a live-lead guard kept it
 
     const idleDays = s.lastInboundAt ? Math.floor((now - s.lastInboundAt) / 86400000) : null;
     const ageMs = subMs ? Math.max(0, now - subMs) : (s.lastInboundAt ? Math.max(0, now - s.lastInboundAt) : 0);
@@ -333,6 +344,7 @@ function buildTasks(input = {}) {
     tasks.push({
       kind: 'new_application',
       phone: a.phone || null, phone_key: pk || null,
+      client_name: a.applicant || a.legal_entity || null,
       title: `Новая заявка · ${a.applicant || a.legal_entity || '—'}`,
       subtitle: `${dateRu} · ${verdict.reason}`,
       last_message: verdict.recommended_action || verdict.reason,
@@ -341,6 +353,7 @@ function buildTasks(input = {}) {
       new_reason: verdict.reason,
       recommended_action: verdict.recommended_action || null,
       needs_calc_reply: !!verdict.needs_calc_reply,
+      stale: isStale,          // >stale-days but a live-lead guard kept it visible → warn operator
       idle_days: idleDays,
       age_ms: ageMs,
       last_at: a.submitted_at || (s.lastInboundAt ? new Date(s.lastInboundAt).toISOString() : null),
@@ -362,11 +375,11 @@ function buildTasks(input = {}) {
 // ─── DB: assemble the task list ─────────────────────────────────────────────────
 async function tasks(deps = {}) {
   const models = deps.models || require('../models');
-  const { WhatsAppMessage, EmailDraft, InboxThreadState } = models;
+  const { WhatsAppMessage, EmailDraft, InboxThreadState, ApplicationOverride } = models;
   const safe = async (p, d) => { try { return await p; } catch (_) { return d; } };
 
   const wq = require('./workQueueService');
-  const [waMessages, labDrafts, stateDocs, newApps, declRows] = await Promise.all([
+  const [waMessages, labDrafts, stateDocs, newApps, declRows, overrideDocs] = await Promise.all([
     // Inbox = direct chats + group messages addressed to the operator (archived group chatter
     // is excluded here, but still stored for search — see archiveOutbound / wa-search).
     safe(WhatsAppMessage.find({ direction: 'inbound', $or: [{ is_group: { $ne: true } }, { addressed_me: true }] }).sort({ received_at: -1 }).limit(500).lean(), []),
@@ -376,10 +389,13 @@ async function tasks(deps = {}) {
     // LIVE «Декларация» read (source of truth) — used to resolve orders, since the Mongo
     // Declaration replica is empty (whatsapp-match-empty-replica-bug).
     safe((deps.readDeclaration || wq.defaultReadDeclaration)(), []),
+    safe(ApplicationOverride.find({ status: 'not_new' }).lean(), []),
   ]);
 
   const threadStates = {};
   for (const s of stateDocs) threadStates[s.phone_key] = s;
+  const applicationOverrides = new Map();
+  for (const o of (overrideDocs || [])) if (o.app_key) applicationOverrides.set(o.app_key, o);
 
   const labEmails = labDrafts.map(d => ({
     id: d._id, subject: d.subject, to: d.to_email, client_name: d.client_name,
@@ -432,7 +448,7 @@ async function tasks(deps = {}) {
 
   return buildTasks({
     waMessages, threadStates, labEmails, newApplications: newApps || [],
-    declByPhone, declByName, semanticRefusedKeys, waSignalsByKey, now: Date.now(),
+    declByPhone, declByName, semanticRefusedKeys, waSignalsByKey, applicationOverrides, now: Date.now(),
   });
 }
 
@@ -525,6 +541,47 @@ async function markThread(phone, action, opts = {}, deps = {}) {
   return { ok: true, phone_key: key, action };
 }
 
+// ─── PURE: the override key for an application (phone match key, else the form row) ──────
+function appKeyFor({ phone, phone_key, sheet_row } = {}) {
+  const pk = phone_key || (phone ? matchKey(phone) : null);
+  if (pk) return pk;
+  if (sheet_row != null && String(sheet_row).trim() !== '') return `row:${sheet_row}`;
+  return null;
+}
+
+// ─── DB: operator marks an application «не новая» (already replied / not relevant / …) ──────
+// The inbox then trusts this over the agent's guess (highest priority). Idempotent per app_key.
+async function markApplication({ phone, sheet_row, client_name, reason, note, operator } = {}, deps = {}) {
+  const models = deps.models || require('../models');
+  const { ApplicationOverride, APPLICATION_OVERRIDE_REASONS } = models;
+  const app_key = appKeyFor({ phone, sheet_row });
+  if (!app_key) return { ok: false, reason: 'no_key' };            // need a phone or a row to key on
+  const r = APPLICATION_OVERRIDE_REASONS.includes(reason) ? reason : 'other';
+  const phone_key = phone ? matchKey(phone) : null;
+  await ApplicationOverride.updateOne(
+    { app_key },
+    { $set: {
+        app_key, status: 'not_new', reason: r, note: note || undefined,
+        phone_key: phone_key || undefined,
+        sheet_row: sheet_row != null && String(sheet_row).trim() !== '' ? Number(sheet_row) : undefined,
+        client_name: client_name || undefined,
+        set_by: operator || 'operator',
+      } },
+    { upsert: true },
+  );
+  return { ok: true, app_key, reason: r, status: 'not_new' };
+}
+
+// ─── DB: operator reopens an application (undo the override → it can be «new» again) ────────
+async function reopenApplication({ phone, sheet_row } = {}, deps = {}) {
+  const models = deps.models || require('../models');
+  const { ApplicationOverride } = models;
+  const app_key = appKeyFor({ phone, sheet_row });
+  if (!app_key) return { ok: false, reason: 'no_key' };
+  const res = await ApplicationOverride.deleteOne({ app_key });
+  return { ok: true, app_key, removed: res.deletedCount || 0 };
+}
+
 // ─── Archive search — over ALL stored WhatsApp (both directions, all chats) ─────
 // For analysing old conversations. q = full-text; phone = one client's thread. Read-only.
 async function searchArchive({ q, phone, limit = 60 } = {}, deps = {}) {
@@ -543,4 +600,4 @@ async function searchArchive({ q, phone, limit = 60 } = {}, deps = {}) {
   }));
 }
 
-module.exports = { buildTasks, threadKey, waName, declIndexFromRows, declNameIndexFromRows, normClientName, proposeReply, fmtSom, isRefused, clientSaidPaid, weSentCalc, classifyApplication, tasks, thread, markThread, searchArchive };
+module.exports = { buildTasks, threadKey, waName, declIndexFromRows, declNameIndexFromRows, normClientName, proposeReply, fmtSom, isRefused, clientSaidPaid, weSentCalc, classifyApplication, tasks, thread, markThread, searchArchive, appKeyFor, markApplication, reopenApplication };

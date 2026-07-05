@@ -2,8 +2,19 @@
 
 - **Status:** DEPLOYED 2026-07-01 (Hetzner Helsinki) — awaiting sign-off + live GOWA group-payload verification
 - **Owner:** jrafgan
-- **Code:** `backend/src/services/taskInboxService.js`, `backend/src/models/InboxThreadState.js`, `frontend/js/control-center.js` (screen «Задачи»)
-- **Last updated:** 2026-07-01
+- **Code:** `backend/src/services/taskInboxService.js`, `backend/src/models/InboxThreadState.js`, `backend/src/models/ApplicationOverride.js`, `frontend/js/control-center.js` (screen «Задачи»)
+- **Last updated:** 2026-07-05
+
+> **2026-07-05 — operator override on «новая заявка».** The agent's new/old guess is imperfect
+> (it can't see replies made outside the system, offline deals, duplicates). The operator can now
+> mark an application **«не новая»** with a reason (`already_replied` | `not_relevant` | `duplicate`
+> | `spam_wrong` | `handled_offline` | `already_client` | `other` + note). Stored in
+> `application_overrides` (model `ApplicationOverride`), keyed by phone match key or `row:<n>`.
+> `buildTasks` hides any application with a `not_new` override **before** classification — the human
+> beats the agent (highest priority). Reversible via reopen (deletes the doc). Routes:
+> `POST /api/control-center/applications/mark` + `/applications/reopen` (audited).
+> Also fixed: the New-Form date lives in **column 0** (header mislabeled «А»); `parseFormDate`
+> now parses «ДД.ММ.ГГГГ ЧЧ:ММ:СС», which revived the age>50д backstop (was a no-op on real data).
 
 ---
 

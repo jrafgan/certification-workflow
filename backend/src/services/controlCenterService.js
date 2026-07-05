@@ -581,11 +581,35 @@ async function markThread({ phone, action, until, actor = {} } = {}) {
   return r;
 }
 
+// Operator marks/reopens a New-Form application as «не новая» — AUDITED. Trusts the human over
+// the agent's «новая заявка» guess (see taskInboxService.markApplication).
+const APP_REASON_RU = {
+  already_replied: 'уже ответили', not_relevant: 'не актуальна', duplicate: 'дубликат',
+  spam_wrong: 'спам/ошибка', handled_offline: 'обработана вне системы',
+  already_client: 'уже клиент', other: 'другое',
+};
+async function markApplication({ phone, sheet_row, client_name, reason, note, actor = {} } = {}) {
+  if (!connected()) throw errorUtils.validationError('Нет подключения к базе данных');
+  const r = await require('./taskInboxService').markApplication({ phone, sheet_row, client_name, reason, note, operator: actor.username || 'operator' });
+  if (r.ok) await audit.record({ user: actor.username, role: actor.role, action: 'application_mark_not_new',
+    summary: `${actor.role === 'administrator' ? 'Администратор' : 'Оператор'} отметил заявку${client_name ? ` «${client_name}»` : ''} как не новую (${APP_REASON_RU[r.reason] || r.reason})`,
+    target_type: 'application_override', target_id: r.app_key });
+  return r;
+}
+async function reopenApplication({ phone, sheet_row, actor = {} } = {}) {
+  if (!connected()) throw errorUtils.validationError('Нет подключения к базе данных');
+  const r = await require('./taskInboxService').reopenApplication({ phone, sheet_row });
+  if (r.ok) await audit.record({ user: actor.username, role: actor.role, action: 'application_reopen',
+    summary: `${actor.role === 'administrator' ? 'Администратор' : 'Оператор'} вернул заявку в новые`,
+    target_type: 'application_override', target_id: r.app_key });
+  return r;
+}
+
 module.exports = {
   summary, pipeline, inbox, drafts, kb, decide, chat, LEAD_STATE_LABELS,
   businessDashboard, sources, listUsers, createUser, setUserActive, kbPending, kbDecide, auditLog,
   // attention-first (pure + db)
   orderDangers, orderTimelineSteps, attention, orderTimeline, orderWorkspace, attentionCenter,
   // task inbox (WhatsApp-style to-do)
-  taskInbox, taskThread, markThread, waSearch,
+  taskInbox, taskThread, markThread, waSearch, markApplication, reopenApplication,
 };

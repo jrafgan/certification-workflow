@@ -60,6 +60,24 @@ function mapHeader(headerRow = []) {
   };
 }
 
+// parseFormDate(v) → Date | null. Handles the Google-Forms Russian timestamp
+// «ДД.ММ.ГГГГ[ ЧЧ:ММ[:СС]]» (which new Date() does NOT parse) plus ISO strings and Date
+// objects. Pure — exported for testing.
+function parseFormDate(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  const s = String(v).trim();
+  const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ ,]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (m) {
+    const dt = new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0));
+    return isNaN(dt.getTime()) ? null : dt;
+  }
+  // ISO / other — require a 4-digit year to avoid false positives on plain numbers/names.
+  if (!/\d{4}/.test(s)) return null;
+  const t = Date.parse(s);
+  return isNaN(t) ? null : new Date(t);
+}
+
 // rowsToApplications(rows) → [{ row, phone, legal_entity, submitted_at, raw }]
 // Pure — exported for testing. rows[0] is the header.
 function rowsToApplications(rows = []) {
@@ -73,13 +91,16 @@ function rowsToApplications(rows = []) {
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     if (!r || r.every(c => !String(c || '').trim())) continue; // skip blank rows
-    const tsRaw = cols.submitted_at >= 0 ? r[cols.submitted_at] : null;
-    const ts = tsRaw ? new Date(tsRaw) : null;
+    // Timestamp: the mapped column if the header named it; else FALL BACK to column 0 —
+    // a Google-Forms responses tab always carries the submission time in column 0, even when
+    // its header cell is mislabeled (this form's is literally «А», so the synonym map missed it).
+    let submitted = cols.submitted_at >= 0 ? parseFormDate(r[cols.submitted_at]) : null;
+    if (!submitted) submitted = parseFormDate(r[0]);
     applications.push({
       row:          i + 1,
       phone:        cols.phone >= 0 ? String(r[cols.phone] || '').trim() : '',
       legal_entity: cols.legal_entity >= 0 ? String(r[cols.legal_entity] || '').trim() : '',
-      submitted_at: ts && !isNaN(ts.getTime()) ? ts : null,
+      submitted_at: submitted,
       raw:          r,
     });
   }
@@ -97,4 +118,4 @@ async function readApplications() {
   return { tab, row_count: Math.max(0, rows.length - 1), ...rowsToApplications(rows) };
 }
 
-module.exports = { readApplications, mapHeader, rowsToApplications, _setSheetsClient, SHEET_NAME };
+module.exports = { readApplications, mapHeader, rowsToApplications, parseFormDate, _setSheetsClient, SHEET_NAME };

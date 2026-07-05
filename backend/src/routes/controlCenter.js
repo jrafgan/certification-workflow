@@ -59,6 +59,20 @@ router.post('/thread/seen', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Operator verdict on a New-Form application: mark «не новая» (reason) or reopen. Audited.
+router.post('/applications/mark', async (req, res, next) => {
+  try {
+    const { phone, sheet_row, client_name, reason, note } = req.body || {};
+    res.json(await cc.markApplication({ phone, sheet_row, client_name, reason, note, actor: req.user }));
+  } catch (e) { next(e); }
+});
+router.post('/applications/reopen', async (req, res, next) => {
+  try {
+    const { phone, sheet_row } = req.body || {};
+    res.json(await cc.reopenApplication({ phone, sheet_row, actor: req.user }));
+  } catch (e) { next(e); }
+});
+
 // ── actions (operator + admin), audited ─────────────────────────────────────
 router.post('/decide', async (req, res, next) => {
   try {
