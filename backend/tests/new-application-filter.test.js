@@ -79,6 +79,39 @@ test('fresh, no WhatsApp at all → new, send offer', () => {
   assert.strictEqual(r.needs_calc_reply, true);
 });
 
+// Rule №6 (priority): age >50 days is a BACKSTOP — applies only after the behavioural checks and
+// only when the creation date is known (opts.ageDays). It never decides alone.
+const clsAge = (sig, ageDays, decl = null) => svc.classifyApplication(sig, decl, { now: NOW, ageDays });
+
+test('6) engaged, no offer, created >50d ago → old (backstop hides it)', () => {
+  const r = clsAge({ hasOutbound: true, lastOutboundAt: daysAgo(10), lastInboundAt: daysAgo(9), offerSent: false }, 55);
+  assert.strictEqual(r.isNew, false);
+  assert.ok(/старше 50 дней/i.test(r.reason));
+});
+
+test('6-neg) engaged, no offer, created ≤50d ago → still new (propose the offer)', () => {
+  const r = clsAge({ hasOutbound: true, lastOutboundAt: daysAgo(3), lastInboundAt: daysAgo(2), offerSent: false }, 40);
+  assert.strictEqual(r.isNew, true);
+  assert.ok(/не отправляли стоимость/i.test(r.reason));
+});
+
+test('6-guard) never replied + created >50d ago → STILL shown (rule 7 beats the age backstop)', () => {
+  const r = clsAge({ hasOutbound: false, lastInboundAt: daysAgo(70) }, 70);
+  assert.strictEqual(r.isNew, true);
+  assert.ok(/ни разу не ответил/i.test(r.reason));
+});
+
+test('6-noDate) engaged, no offer, creation date UNKNOWN → age not applied, stays new', () => {
+  const r = clsAge({ hasOutbound: true, lastOutboundAt: daysAgo(10), lastInboundAt: daysAgo(9), offerSent: false }, null);
+  assert.strictEqual(r.isNew, true);
+});
+
+test('6-offer) offer already sent wins over the age backstop → stays new (ждём решения)', () => {
+  const r = clsAge({ hasOutbound: true, lastOutboundAt: daysAgo(10), lastInboundAt: daysAgo(9), offerSent: true }, 60);
+  assert.strictEqual(r.isNew, true);
+  assert.strictEqual(r.needs_calc_reply, false);
+});
+
 console.log('\n[buildTasks integration]');
 const PHONE = '996700111222';
 const PK = PHONE.slice(-9);
@@ -95,6 +128,13 @@ test('never-replied application → shown with needs_calc_reply', () => {
   assert.strictEqual(na.length, 1);
   assert.strictEqual(na[0].needs_calc_reply, true);
   assert.ok(na[0].recommended_action);
+});
+
+test('old application (submitted >50d ago) we engaged but never quoted → hidden by age backstop', () => {
+  const oldApp = { sheet_row: 6, applicant: 'ИП Старый', phone: PHONE, submitted_at: new Date(daysAgo(55)).toISOString() };
+  const signals = sig({ hasOutbound: true, lastOutboundAt: daysAgo(20), lastInboundAt: daysAgo(21), offerSent: false });
+  const na = svc.buildTasks({ waMessages: [], threadStates: {}, labEmails: [], newApplications: [oldApp], declByPhone: {}, waSignalsByKey: signals, now: NOW }).tasks.filter(t => t.kind === 'new_application');
+  assert.strictEqual(na.length, 0);
 });
 
 console.log('\n[weSentCalc]');

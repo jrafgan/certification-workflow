@@ -30,6 +30,11 @@ const REASON_RU = { direct: 'личка', mention: 'упомянули вас', 
 // прошло >N дней без ответа. Env: NEW_APP_NORESPONSE_DAYS (по умолч. 30).
 const NEW_APP_NORESPONSE_DAYS = parseInt(process.env.NEW_APP_NORESPONSE_DAYS, 10) || 30;
 
+// «Возраст заявки» (правило приоритета №6): если известна ДАТА СОЗДАНИЯ и с неё прошло >N
+// календарных дней — заявка считается старой (backstop ПОСЛЕ поведенческих проверок; случай
+// «мы ни разу не ответили» защищён отдельным правилом выше). Env: NEW_APP_STALE_DAYS (по умолч. 50).
+const NEW_APP_STALE_DAYS = parseInt(process.env.NEW_APP_STALE_DAYS, 10) || 50;
+
 // weSentCalc(text) — ИСХОДЯЩЕЕ сообщение = коммерческое предложение клиенту: явное КП/счёт
 // (без числа) ИЛИ упоминание стоимости/протокола/итога + число (≥3 цифр). Так агент понимает,
 // отправляли мы клиенту предложение по стоимости или нет.
@@ -49,12 +54,16 @@ const CLIENT_PAID_RE = /оплатил|оплачен|перев[её]л|пер�
 function clientSaidPaid(text = '') { return CLIENT_PAID_RE.test(String(text || '')); }
 
 // classifyApplication(sig, decl, opts) → { isNew, reason, recommended_action?, needs_calc_reply? }.
-// PURE. Приоритетный порядок правил (ТЗ 2026-07-04). Возраст — ВСПОМОГАТЕЛЬНЫЙ (у формы нет даты
-// создания); решает фактическое состояние клиента. sig = { lastInboundAt, lastOutboundAt,
-// hasOutbound, offerSent, semanticRefused, inboundTexts[] }. decl = запись «Декларации» или null.
+// PURE. Приоритетный порядок правил (ТЗ 2026-07-04, уточнено 2026-07-05). Возраст —
+// ВСПОМОГАТЕЛЬНЫЙ backstop: применяется ТОЛЬКО когда известна дата создания (opts.ageDays) и лишь
+// после поведенческих проверок; сам по себе решений не принимает. sig = { lastInboundAt,
+// lastOutboundAt, hasOutbound, offerSent, semanticRefused, inboundTexts[] }. decl = запись
+// «Декларации» или null. opts.ageDays = возраст заявки в днях от даты создания (null если неизвестна).
 function classifyApplication(sig = {}, decl = null, opts = {}) {
   const now = opts.now || Date.now();
   const noResponseDays = opts.noResponseDays || NEW_APP_NORESPONSE_DAYS;
+  const staleDays = opts.staleDays || NEW_APP_STALE_DAYS;
+  const ageDays = Number.isFinite(opts.ageDays) ? opts.ageDays : null;   // только от даты создания
   const inboundTexts = sig.inboundTexts || [];
   const lastInboundAt = sig.lastInboundAt || null;
   const lastOutboundAt = sig.lastOutboundAt || null;
@@ -80,6 +89,11 @@ function classifyApplication(sig = {}, decl = null, opts = {}) {
   // 5) КП уже отправлено, клиент ещё в диалоге → остаётся новой, ждём решения
   if (offerSent)
     return { isNew: true, needs_calc_reply: false, reason: 'КП отправлено — ждём решения клиента', recommended_action: null };
+  // 6) Возраст > N дней (backstop): мы вовлекались (хотя бы одно наше сообщение — иначе правило
+  //    «ни разу не ответили» выше уже вернуло isNew:true), стоимость не отправляли, дата создания
+  //    известна и старше порога → заявка старая. Возраст в одиночку не решает (см. правила 1–5, 7).
+  if (ageDays != null && ageDays > staleDays)
+    return { isNew: false, reason: `Заявка старше ${staleDays} дней без движения` };
   // Иначе: мы писали, но стоимость ещё не отправляли → предложить отправить
   return { isNew: true, needs_calc_reply: true, reason: 'Клиенту ещё не отправляли стоимость услуг',
            recommended_action: 'Предложить оператору отправить клиенту коммерческое предложение' };
@@ -298,11 +312,14 @@ function buildTasks(input = {}) {
       if (nk) decl = declByName[nk] || null;
     }
     const s = sigFor(pk);
-    const verdict = classifyApplication({ ...s, semanticRefused: pk && semanticRefused.has(pk) }, decl, { now });
+    // Возраст ТОЛЬКО от реальной даты создания заявки (для backstop-правила №6). Нет даты → null,
+    // возрастом не пользуемся (у формы часто нет timestamp — real-applications-source).
+    const subMs = a.submitted_at ? Date.parse(a.submitted_at) : null;
+    const ageDays = Number.isFinite(subMs) ? Math.floor((now - subMs) / 86400000) : null;
+    const verdict = classifyApplication({ ...s, semanticRefused: pk && semanticRefused.has(pk) }, decl, { now, ageDays });
     if (!verdict.isNew) { hiddenNewApps++; continue; }
 
     const idleDays = s.lastInboundAt ? Math.floor((now - s.lastInboundAt) / 86400000) : null;
-    const subMs = a.submitted_at ? Date.parse(a.submitted_at) : null;
     const ageMs = subMs ? Math.max(0, now - subMs) : (s.lastInboundAt ? Math.max(0, now - s.lastInboundAt) : 0);
     const dateRu = subMs ? new Date(subMs).toLocaleDateString('ru-RU') : (idleDays != null ? `последнее сообщение ${idleDays} дн. назад` : 'дата неизвестна');
     tasks.push({
