@@ -214,8 +214,34 @@
     const meta = `<div class="td-info">
         <div><b>Откуда:</b> ${esc(d.origin || '—')}</div>
         <div><b>Куда идём:</b> ${nextStep}</div>
+        ${d.days_since_last != null ? `<div><b>Последнее сообщение:</b> ${d.days_since_last === 0 ? 'сегодня' : esc(String(d.days_since_last)) + ' дн. назад'}</div>` : ''}
         ${e ? `<div><b>Заказов активных:</b> ${esc(String(e.active_count == null ? '' : e.active_count))}</div>` : ''}
       </div>`;
+
+    // Резюме переписки (агент).
+    const summary = d.conversation_summary
+      ? `<div class="td-info" style="background:#eff6ff;border-color:#bfdbfe"><b>🧾 Резюме:</b> ${esc(d.conversation_summary)}</div>` : '';
+
+    // Карточка заявки из «Новой формы» (центр CRM).
+    const fld = (label, val) => `<div><b>${label}:</b> ${val ? esc(val) : '<span class="muted">—</span>'}</div>`;
+    const app = d.application && d.application.found ? d.application.card : null;
+    const multi = d.application && d.application.match_count > 1
+      ? `<div class="muted" style="margin-top:4px">⚠ По этому номеру найдено ${esc(String(d.application.match_count))} заявок — показана последняя (строка ${esc(String(app.sheet_row))}).</div>` : '';
+    const appCard = app
+      ? `<div class="td-sec-h">Заявка (Новая форма)</div><div class="td-info">
+          ${fld('Дата заявки', app.submitted_at ? new Date(app.submitted_at).toLocaleString('ru-RU') : '')}
+          ${fld('Компания / ФИО', app.company_name)}
+          ${fld('ИП / ОсОО', app.entity_type)}
+          ${fld('ТН ВЭД', app.tnved)}
+          ${fld('Товары / состав', app.goods)}
+          ${fld('Производитель', app.producer)}
+          ${fld('Страна производства', app.production_country)}
+          ${fld('Страна регистрации', app.reg_country)}
+          ${fld('Бренд', app.brand)}
+          ${fld('Группа товара', app.age_group)}
+          ${multi}
+        </div>`
+      : `<div class="td-sec-h">Заявка (Новая форма)</div><div class="muted">Заявка по этому номеру в «Новой форме» не найдена.</div>`;
 
     // История WhatsApp.
     const msgs = (d.messages || []).map(m =>
@@ -246,6 +272,8 @@
         <span class="td-tools"><button class="btn-done" data-done-phone="${esc(d.phone || '')}">✓ Готово</button>
         <button class="btn-snooze" data-snooze-phone="${esc(d.phone || '')}">🕒 Отложить</button></span></div>
       ${meta}
+      ${summary}
+      ${appCard}
       ${reply}
       <div class="td-sec-h">История переписки WhatsApp</div>
       <div class="td-thread">${msgs}</div>

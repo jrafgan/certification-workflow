@@ -512,13 +512,25 @@ async function thread(phone, deps = {}) {
     ? { text: draftDoc.proposed_text, kind: draftDoc.kind, reason: 'готовый черновик агента', draft_id: String(draftDoc._id), state: draftDoc.state }
     : proposeReply(ent);
 
+  // Client-card additions: New-Form application fields (multi-match aware), days since the last
+  // WhatsApp message, and a short agent summary of the conversation.
+  const application = await safe(applicationCardByPhone(phone, deps), { found: false });
+  const now = deps.now || Date.now();
+  const lastMsg = messages.length ? messages[messages.length - 1] : null;
+  const lastAt = lastMsg && lastMsg.at ? new Date(lastMsg.at).getTime() : null;
+  const days_since_last = lastAt != null ? Math.floor((now - lastAt) / 86400000) : null;
+  const conversation_summary = conversationSummary(messages, { now });
+
   return {
     found: true,
     phone, phone_key: key,
     entity: ent,
+    application,                                  // ← «Новая форма»: компания/ИП/ФИО/ТНВЭД/производитель/страна
     payment: ent ? { paid: ent.paid_total, debt: ent.debt_total, is_paid: ent.is_paid } : { paid: 0, debt: 0, is_paid: false },
     origin, next_step,
     messages,
+    days_since_last,                              // ← сколько дней после последнего сообщения
+    conversation_summary,                         // ← краткое резюме переписки (агент)
     email_history,
     email_status: email_history[0] || null,     // back-compat: latest item
     proposed_reply,
@@ -602,4 +614,77 @@ async function searchArchive({ q, phone, limit = 60 } = {}, deps = {}) {
   }));
 }
 
-module.exports = { buildTasks, threadKey, waName, declIndexFromRows, declNameIndexFromRows, normClientName, proposeReply, fmtSom, isRefused, clientSaidPaid, weSentCalc, classifyApplication, tasks, thread, markThread, searchArchive, appKeyFor, markApplication, reopenApplication };
+// ─── Client card: the New-Form application fields for a phone (multi-match aware) ──────
+// Reads the form rows via formFieldMapper (the rich mapper the inbox uses) and returns the
+// card fields the operator needs. If several rows share the phone → newest wins, but match_count
+// and the list are returned so the UI can let the operator choose. READ-ONLY.
+async function applicationCardByPhone(phone, deps = {}) {
+  const key = matchKey(phone);
+  if (!key) return { found: false };
+  const mapper = deps.mapper || require('./formFieldMapper');
+  const readRows = deps.readRows || require('./mockupGenerationService').defaultReadRows;
+  let header = [], rows = [];
+  try { ({ header, rows } = await readRows()); } catch (_) { return { found: false, reason: 'read_failed' }; }
+
+  const matches = [];
+  for (let i = 0; i < rows.length; i++) {
+    let app; try { app = mapper.mapRow(header, rows[i], { docType: null }); } catch (_) { continue; }
+    const ph = app && app.applicant && app.applicant.phone;
+    if (ph && matchKey(ph) === key) matches.push({ sheet_row: i + 2, app, submitted_at: app.submitted_at || null });
+  }
+  if (!matches.length) return { found: false };
+  matches.sort((a, b) => new Date(b.submitted_at || 0) - new Date(a.submitted_at || 0));  // newest first
+  const a = matches[0].app;
+  const tnved = a.tnved_text || (a.items || []).map(x => x.tnved).filter(Boolean).join(', ') || null;
+  const card = {
+    sheet_row:          matches[0].sheet_row,
+    submitted_at:       a.submitted_at || null,
+    company_name:       (a.applicant && a.applicant.name) || a.legal_entity || null,
+    entity_type:        a.legal_entity || null,          // «ИП» / «ОсОО или ООО или ТОО»
+    fio:                (a.applicant && a.applicant.name) || null,
+    inn:                (a.applicant && a.applicant.inn) || null,
+    reg_country:        a.l_e_country || null,
+    tnved,
+    goods:              a.items_text || null,
+    producer:           (a.manufacturer && a.manufacturer.name) || null,
+    production_country: (a.manufacturer && a.manufacturer.country) || null,
+    brand:              a.brand || null,
+    age_group:          a.age || null,
+  };
+  return {
+    found: true, card, match_count: matches.length,
+    matches: matches.map(x => ({ sheet_row: x.sheet_row, submitted_at: x.submitted_at, name: x.app.applicant && x.app.applicant.name })),
+  };
+}
+
+// ─── Client card: a short RU summary of the WhatsApp conversation (PURE, rule-based) ──────
+// Example: «Последний контакт 12 дн. назад. Клиент ждёт стоимость. Ответа после нашего сообщения
+// не было.» Built from the message stream + signals — no LLM, deterministic.
+function conversationSummary(messages = [], opts = {}) {
+  if (!messages.length) return 'Переписки в WhatsApp пока нет.';
+  const now = opts.now || Date.now();
+  const last = messages[messages.length - 1];
+  const lastAt = last.at ? new Date(last.at).getTime() : null;
+  const days = lastAt != null ? Math.floor((now - lastAt) / 86400000) : null;
+  const parts = [];
+  if (days != null) parts.push(days <= 0 ? 'Последний контакт сегодня.' : `Последний контакт ${days} дн. назад.`);
+
+  const outbound = messages.filter(m => m.direction === 'outbound');
+  const inbound = messages.filter(m => m.direction !== 'outbound');
+  const weSentOffer = outbound.some(m => weSentCalc(m.body || ''));
+  const lastInbound = inbound.length ? inbound[inbound.length - 1] : null;
+  const lastText = lastInbound && lastInbound.body ? String(lastInbound.body) : '';
+
+  if (lastText && isRefused(lastText)) parts.push('Клиент написал отказ — уточнить актуальность.');
+  else if (lastText && clientSaidPaid(lastText)) parts.push('Клиент сообщил об оплате.');
+  else if (weSentOffer) parts.push('Мы отправляли стоимость — клиент ждёт/рассматривает.');
+  else if (inbound.length && !outbound.length) parts.push('Клиент писал, мы ещё не отвечали.');
+
+  // Who owes the next move.
+  if (last.direction === 'outbound') parts.push('Ответа после нашего сообщения не было.');
+  else parts.push('Клиент ждёт нашего ответа.');
+
+  return parts.join(' ');
+}
+
+module.exports = { buildTasks, threadKey, waName, declIndexFromRows, declNameIndexFromRows, normClientName, proposeReply, fmtSom, isRefused, clientSaidPaid, weSentCalc, classifyApplication, tasks, thread, markThread, searchArchive, appKeyFor, markApplication, reopenApplication, applicationCardByPhone, conversationSummary };
