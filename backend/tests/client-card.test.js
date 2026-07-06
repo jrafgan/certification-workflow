@@ -78,6 +78,23 @@ test('card: multiple rows same phone → match_count>1, newest wins', async () =
   assert.strictEqual(r.found, true);
   assert.strictEqual(r.match_count, 2);
   assert.strictEqual(r.card.company_name, 'Новая заявка');   // newest by submitted_at
+  assert.strictEqual(r.selected_row, r.card.sheet_row);
+  assert.strictEqual(r.matches.length, 2);
+});
+test('card: operator picks an older row → that row is rendered', async () => {
+  const rows = [
+    ['01.01.2026 10:00:00', '+996700111222', 'ИП', 'Старая заявка', 'KG', '', '', '', '', '', '', '', '', '', '', ''],
+    ['05.02.2026 10:00:00', '+996700111222', 'ИП', 'Новая заявка', 'KG', '', '', '', '', '', '', '', '', '', '', ''],
+  ];
+  const deps = { ...stub(rows, HEADER), sheet_row: 2 };        // row 2 = the older «Старая заявка»
+  const r = await svc.applicationCardByPhone('+996700111222', deps);
+  assert.strictEqual(r.card.company_name, 'Старая заявка');
+  assert.strictEqual(r.selected_row, 2);
+});
+test('card: picking a non-existent row → falls back to newest', async () => {
+  const rows = [['05.02.2026 10:00:00', '+996700111222', 'ИП', 'Новая заявка', 'KG', '', '', '', '', '', '', '', '', '', '', '']];
+  const r = await svc.applicationCardByPhone('+996700111222', { ...stub(rows, HEADER), sheet_row: 999 });
+  assert.strictEqual(r.card.company_name, 'Новая заявка');
 });
 
 // ── clientEmails DEEP-MATCH (stubbed gmail + lab registry, no network) ──

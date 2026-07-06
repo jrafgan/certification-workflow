@@ -780,10 +780,14 @@ async function applicationCardByPhone(phone, deps = {}) {
   }
   if (!matches.length) return { found: false };
   matches.sort((a, b) => new Date(b.submitted_at || 0) - new Date(a.submitted_at || 0));  // newest first
-  const a = matches[0].app;
+
+  // Multi-match: default = newest, but the operator can pick a specific row (deps.sheet_row).
+  const wantRow = deps.sheet_row != null && String(deps.sheet_row).trim() !== '' ? Number(deps.sheet_row) : null;
+  const chosen = (wantRow != null && matches.find(m => m.sheet_row === wantRow)) || matches[0];
+  const a = chosen.app;
   const tnved = a.tnved_text || (a.items || []).map(x => x.tnved).filter(Boolean).join(', ') || null;
   const card = {
-    sheet_row:          matches[0].sheet_row,
+    sheet_row:          chosen.sheet_row,
     submitted_at:       a.submitted_at || null,
     company_name:       (a.applicant && a.applicant.name) || a.legal_entity || null,
     entity_type:        a.legal_entity || null,          // «ИП» / «ОсОО или ООО или ТОО»
@@ -798,7 +802,7 @@ async function applicationCardByPhone(phone, deps = {}) {
     age_group:          a.age || null,
   };
   return {
-    found: true, card, match_count: matches.length,
+    found: true, card, match_count: matches.length, selected_row: chosen.sheet_row,
     matches: matches.map(x => ({ sheet_row: x.sheet_row, submitted_at: x.submitted_at, name: x.app.applicant && x.app.applicant.name })),
   };
 }

@@ -42,6 +42,8 @@ router.get('/wa-search', async (req, res, next) => { try { res.json(await cc.waS
 router.get('/autoreplies', async (req, res, next) => { try { res.json(await cc.autoReplies({ limit: req.query.limit ? parseInt(req.query.limit, 10) : 80, decision: req.query.decision })); } catch (e) { next(e); } });
 // Ленивый Gmail-поиск писем клиента (медленный → отдельно от карточки).
 router.get('/client-emails', async (req, res, next) => { try { res.json(await cc.clientEmails(req.query.phone)); } catch (e) { next(e); } });
+// Карточка заявки по выбранной строке формы (переключатель, когда по номеру несколько заявок).
+router.get('/application-card', async (req, res, next) => { try { res.json(await cc.applicationCard(req.query.phone, req.query.sheet_row)); } catch (e) { next(e); } });
 // Неотвеченные письма — живой список цепочек Gmail, где мы так и не ответили (последнее
 // сообщение не от нас). Показывает тему, текст и файл последнего сообщения.
 router.get('/emails-unanswered', async (req, res, next) => {

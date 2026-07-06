@@ -197,6 +197,37 @@
   }
   const bubbleAt = (d) => d ? new Date(d).toLocaleString('ru-RU') : '';
   const fmtSom = (n) => String(n || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  // Карточка заявки + переключатель строк формы (когда по номеру несколько заявок). Тот же shape
+  // приходит и из /thread (d.application), и из /application-card — рендерим одинаково.
+  function renderAppCard(application, phone) {
+    const fld = (label, val) => `<div><b>${label}:</b> ${val ? esc(val) : '<span class="muted">—</span>'}</div>`;
+    if (!application || !application.found || !application.card)
+      return `<div class="td-sec-h">Заявка (Новая форма)</div><div class="muted">Заявка по этому номеру в «Новой форме» не найдена.</div>`;
+    const app = application.card;
+    const sel = application.selected_row != null ? application.selected_row : app.sheet_row;
+    let switcher = '';
+    if (application.match_count > 1 && Array.isArray(application.matches)) {
+      const btns = application.matches.map(m => {
+        const active = String(m.sheet_row) === String(sel);
+        const label = `${m.submitted_at ? new Date(m.submitted_at).toLocaleDateString('ru-RU') : 'без даты'}${m.name ? ' · ' + m.name : ''} · стр.${m.sheet_row}`;
+        return `<button class="btn-appsel${active ? ' active' : ''}" data-appsel="${esc(String(m.sheet_row))}" data-appphone="${esc(phone || '')}"${active ? ' disabled' : ''}>${esc(label)}</button>`;
+      }).join(' ');
+      switcher = `<div class="muted" style="margin-top:6px">⚠ По номеру найдено ${esc(String(application.match_count))} заявок — выберите нужную:</div><div class="appsel-row" style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">${btns}</div>`;
+    }
+    return `<div class="td-sec-h">Заявка (Новая форма)</div><div class="td-info">
+        ${fld('Дата заявки', app.submitted_at ? new Date(app.submitted_at).toLocaleString('ru-RU') : '')}
+        ${fld('Компания / ФИО', app.company_name)}
+        ${fld('ИП / ОсОО', app.entity_type)}
+        ${fld('ТН ВЭД', app.tnved)}
+        ${fld('Товары / состав', app.goods)}
+        ${fld('Производитель', app.producer)}
+        ${fld('Страна производства', app.production_country)}
+        ${fld('Страна регистрации', app.reg_country)}
+        ${fld('Бренд', app.brand)}
+        ${fld('Группа товара', app.age_group)}
+        ${switcher}
+      </div>`;
+  }
   function renderThread(d) {
     const e = d.entity;
     const pay = d.payment || { paid: 0, debt: 0 };
@@ -222,26 +253,8 @@
     const summary = d.conversation_summary
       ? `<div class="td-info" style="background:#eff6ff;border-color:#bfdbfe"><b>🧾 Резюме:</b> ${esc(d.conversation_summary)}</div>` : '';
 
-    // Карточка заявки из «Новой формы» (центр CRM).
-    const fld = (label, val) => `<div><b>${label}:</b> ${val ? esc(val) : '<span class="muted">—</span>'}</div>`;
-    const app = d.application && d.application.found ? d.application.card : null;
-    const multi = d.application && d.application.match_count > 1
-      ? `<div class="muted" style="margin-top:4px">⚠ По этому номеру найдено ${esc(String(d.application.match_count))} заявок — показана последняя (строка ${esc(String(app.sheet_row))}).</div>` : '';
-    const appCard = app
-      ? `<div class="td-sec-h">Заявка (Новая форма)</div><div class="td-info">
-          ${fld('Дата заявки', app.submitted_at ? new Date(app.submitted_at).toLocaleString('ru-RU') : '')}
-          ${fld('Компания / ФИО', app.company_name)}
-          ${fld('ИП / ОсОО', app.entity_type)}
-          ${fld('ТН ВЭД', app.tnved)}
-          ${fld('Товары / состав', app.goods)}
-          ${fld('Производитель', app.producer)}
-          ${fld('Страна производства', app.production_country)}
-          ${fld('Страна регистрации', app.reg_country)}
-          ${fld('Бренд', app.brand)}
-          ${fld('Группа товара', app.age_group)}
-          ${multi}
-        </div>`
-      : `<div class="td-sec-h">Заявка (Новая форма)</div><div class="muted">Заявка по этому номеру в «Новой форме» не найдена.</div>`;
+    // Карточка заявки из «Новой формы» (центр CRM) — с переключателем строк при мульти-матче.
+    const appCard = `<div id="td-appcard">${renderAppCard(d.application, d.phone)}</div>`;
 
     // История WhatsApp.
     const msgs = (d.messages || []).map(m =>
@@ -304,6 +317,17 @@
     postJSON(api('/thread/seen'), { phone, action: 'seen' }).catch(() => {}); // mark read
     if (d.email_lazy) loadClientEmails(phone);     // медленный Gmail-поиск — после рендера карточки
   }
+  // Переключение заявки при мульти-матче → перерисовываем только карточку заявки (без всего треда).
+  document.addEventListener('click', async e => {
+    const b = e.target.closest('button[data-appsel]'); if (!b) return;
+    const host = document.getElementById('td-appcard'); if (!host) return;
+    host.style.opacity = '0.5';
+    try {
+      const r = await getJSON(api('/application-card?phone=' + encodeURIComponent(b.dataset.appphone) + '&sheet_row=' + encodeURIComponent(b.dataset.appsel)));
+      host.innerHTML = renderAppCard(r, b.dataset.appphone);
+    } catch (_) { /* оставляем текущую карточку */ }
+    host.style.opacity = '';
+  });
   // «🤖 Черновик ИИ» — LLM-ответ клиенту с учётом «Декларации» + истории WhatsApp; кладём в поле.
   document.addEventListener('click', async e => {
     const b = e.target.closest('button[data-ai-phone]'); if (!b) return;

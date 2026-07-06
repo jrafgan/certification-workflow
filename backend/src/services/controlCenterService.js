@@ -625,6 +625,12 @@ async function clientEmails(phone) {
   const r = await require('./taskInboxService').clientEmails(phone);
   return { db_connected: true, ...r };
 }
+// Client card for a chosen application row (multi-match switcher). Reads Sheets, not Mongo — works
+// even when the DB is offline. sheet_row optional (default = newest match).
+async function applicationCard(phone, sheet_row) {
+  const r = await require('./taskInboxService').applicationCardByPhone(phone, { sheet_row });
+  return { db_connected: connected(), ...r };
+}
 async function taskThread(phone) {
   if (!connected()) return { db_connected: false };
   const r = await require('./taskInboxService').thread(phone);
@@ -678,5 +684,5 @@ module.exports = {
   orderDangers, orderTimelineSteps, attention, orderTimeline, orderWorkspace, attentionCenter,
   // task inbox (WhatsApp-style to-do)
   taskInbox, taskThread, markThread, waSearch, markApplication, reopenApplication,
-  autoReplies, clientEmails,
+  autoReplies, clientEmails, applicationCard,
 };
