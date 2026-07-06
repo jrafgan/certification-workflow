@@ -249,6 +249,22 @@
         ${e ? `<div><b>Заказов активных:</b> ${esc(String(e.active_count == null ? '' : e.active_count))}</div>` : ''}
       </div>`;
 
+    // Декларация — список заказов с подтверждёнными полями (N=статус, G=оплата). Даты нет:
+    // столбец даты в схеме «Декларации» не подтверждён (см. память declaration-schema-status),
+    // поэтому НЕ выдумываем — показываем только статус + сумму по каждому заказу.
+    const orders = (e && Array.isArray(e.orders)) ? e.orders : [];
+    const declBlock = (e && e.in_declaration && orders.length)
+      ? `<div class="td-sec-h">Декларация — заказы (${esc(String(orders.length))})</div><div class="td-info">${
+          orders.map(o => {
+            const done = o.stage === 'done';
+            const badge = `<span class="tk-tag" style="background:${done ? '#dcfce7' : '#dbeafe'};color:${done ? '#166534' : '#1e40af'}">${esc(o.status || '—')}</span>`;
+            const money = o.paid > 0 ? `💰 ${esc(fmtSom(o.paid))} сом${o.debt > 0 ? ` · долг ${esc(fmtSom(o.debt))} сом` : ''}` : '<span class="muted">не оплачено</span>';
+            const actor = (!done && o.next_actor_ru) ? ` · действует: ${esc(o.next_actor_ru)}` : '';
+            return `<div style="margin:2px 0">${badge} ${money}${actor}${o.client ? ` <span class="muted">· ${esc(o.client)}</span>` : ''}</div>`;
+          }).join('')
+        }<div class="muted" style="margin-top:4px">Σ оплачено ${esc(fmtSom(e.paid_total || 0))} сом${e.debt_total > 0 ? ` · Σ долг ${esc(fmtSom(e.debt_total))} сом` : ''} · дата: <span title="столбец даты в «Декларации» не подтверждён">не в схеме</span></div></div>`
+      : '';
+
     // Резюме переписки (агент).
     const summary = d.conversation_summary
       ? `<div class="td-info" style="background:#eff6ff;border-color:#bfdbfe"><b>🧾 Резюме:</b> ${esc(d.conversation_summary)}</div>` : '';
@@ -286,6 +302,7 @@
         <span class="td-tools"><button class="btn-done" data-done-phone="${esc(d.phone || '')}">✓ Готово</button>
         <button class="btn-snooze" data-snooze-phone="${esc(d.phone || '')}">🕒 Отложить</button></span></div>
       ${meta}
+      ${declBlock}
       ${summary}
       ${appCard}
       ${reply}
