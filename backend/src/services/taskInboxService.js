@@ -553,19 +553,15 @@ async function thread(phone, deps = {}) {
   };
 }
 
-// ─── Lazy: DEEP Gmail match for a client's lab correspondence (slow → separate from thread()) ──
+// ─── Lazy: Gmail match for a client's lab correspondence (slow → separate from thread()) ──────
 // Same operator gate as thread(): only when the client is in «Декларация» with status ≠ «Запустить»
 // (an order actually sent to a lab is the only case where a lab email exists to find).
 //
-// DEEP-MATCH — instead of a bare name search, we layer the signals we actually have and rank every
-// thread by confidence + evidence (never auto-acts — see Workflow Auditor rules). Signals:
-//   • имя клиента в теме письма  — заказ уходит в лабораторию с юр.лицом в теме (сильный сигнал),
-//   • телефон клиента            — 9-значный локальный номер встречается в теме,
-//   • контрагент-лаборатория     — from/to = один из зарегистрированных адресов лабораторий
-//                                  (Бермет / Айгерим / Айсулуу) → письмо точно по заказу, не шум.
-// Two Gmail passes: (A) identity AND lab (precise) + (B) identity only (recall), merged & deduped,
-// каждый тред получает confidence high|medium|low. Best-effort, READ-ONLY. Called by the panel
-// AFTER the card renders, so an 8s Gmail round-trip never blocks the card.
+// MATCH RULE (operator-set): the client NAME from «Декларация» (col D) in the email SUBJECT. Lab
+// letters use the юр.лицо as the subject; and the lab ADDRESS is not stored in «Декларация», so
+// confidence rests on the name↔subject match alone — a specific name → high, a short/generic name →
+// medium (operator reviews), no name in subject → not this client's letter. READ-ONLY. Called by
+// the panel AFTER the card renders so the Gmail round-trip never blocks the card.
 async function clientEmails(phone, deps = {}) {
   const key = matchKey(phone);
   if (!key) return { found: false, reason: 'bad_phone', emails: [] };
@@ -577,93 +573,61 @@ async function clientEmails(phone, deps = {}) {
   if (!launched)
     return { found: false, reason: 'Заказ на статусе «Запустить» — в лабораторию ещё не отправлен.', emails: [] };
 
+  // МЭТЧ (правило оператора): имя клиента из «Декларации» (col D) в ТЕМЕ письма. Адрес лаборатории
+  // в «Декларации» НЕ хранится, поэтому уверенность строится ТОЛЬКО на совпадении имени с темой:
+  //   • специфичное имя (≥2 слов или ≥6 символов) в теме → high (агент запишет сам, если имя
+  //     ведёт к одному номеру — см. emailLinkService.decideLinks),
+  //   • короткое/общее имя в теме                        → medium (в очередь оператору),
+  //   • имени клиента в теме нет                          → это не письмо клиента (пропуск).
+  // Тело письма НЕ читаем (короткие имена в теле давали мусор — напр. рекламные рассылки). Адрес
+  // лаборатории — только справочная пометка «от лаборатории», на уверенность НЕ влияет.
   const names = [...new Set([ent.legal_entity, ...(ent.orders || []).map(o => o.client)].filter(Boolean))];
-  const localPhone = normalizeLocal(phone);                          // 9-значный локальный номер, как в теме
-  if (!names.length && !localPhone)
-    return { found: false, reason: 'Имя клиента и телефон не определены.', emails: [] };
+  if (!names.length)
+    return { found: false, reason: 'Имя клиента в «Декларации» не определено — искать письмо не по чему.', emails: [] };
 
-  // Контрагенты-лаборатории из единого реестра (env-overridable) — сигнал «это письмо по заказу».
+  const isSpecific = (n) => { const s = String(n).trim(); return s.split(/\s+/).filter(Boolean).length >= 2 || s.length >= 6; };
   const labCfg = deps.labRecipients || require('../config/labRecipients');
   const labEmails = [...new Set([labCfg.SS, labCfg.DS_NO_WORKSHOP, labCfg.DS_WITH_WORKSHOP]
     .map(l => l && l.email).filter(Boolean).map(e => e.toLowerCase()))];
 
   const quote = s => `"${String(s).replace(/"/g, '')}"`;
-  const identity = [...names.map(quote), ...(localPhone ? [quote(localPhone)] : [])];
-  const identityQ = identity.length > 1 ? `(${identity.join(' OR ')})` : identity[0];
-  const labQ = labEmails.length ? `(${labEmails.map(e => `from:${e} OR to:${e}`).join(' OR ')})` : '';
-
   const namesLc = names.map(n => n.toLowerCase());
-  // Score a thread from its metadata (from/to/subject) → confidence + human evidence string.
+  const identityQ = names.length > 1 ? `(${names.map(quote).join(' OR ')})` : quote(names[0]);
+
+  // Score by Declaration-name-in-subject ONLY. null → the subject carries no client name (not a match).
   function score(t) {
-    const hay = `${t.from || ''} ${t.to || ''}`.toLowerCase();
     const subj = (t.subject || '').toLowerCase();
-    const involvesLab = labEmails.some(e => hay.includes(e));
-    const nameInSubject = namesLc.some(n => n && subj.includes(n));
-    const phoneInSubject = !!localPhone && subj.includes(localPhone);
-    const sig = [];
-    if (involvesLab)    sig.push('лаборатория');
-    if (nameInSubject)  sig.push('имя в теме');
-    if (phoneInSubject) sig.push('телефон');
-    let confidence = 'low';
-    if (involvesLab && (nameInSubject || phoneInSubject)) confidence = 'high';
-    else if (involvesLab || nameInSubject)                confidence = 'medium';
-    return { confidence, match_by: sig.join(' + ') || 'совпадение по имени', signals: sig };
+    let matched = null, matchedSpecific = false;
+    for (const n of namesLc) {
+      if (n && subj.includes(n) && (!matched || (isSpecific(n) && !matchedSpecific))) {
+        matched = n; matchedSpecific = isSpecific(n);
+      }
+    }
+    if (!matched) return null;
+    const hay = `${t.from || ''} ${t.to || ''}`.toLowerCase();
+    const sig = ['имя в теме'];
+    if (labEmails.some(e => hay.includes(e))) sig.push('от лаборатории');   // справочно, не влияет на уверенность
+    return { confidence: matchedSpecific ? 'high' : 'medium', match_by: sig.join(' + '), signals: sig };
   }
 
   try {
     const gmail = deps.gmail || require('../integrations/gmailClient');
-    const byThread = new Map();
-    const ingest = async (q, cap) => {
-      if (!q) return;
-      const found = await gmail.searchThreads(q, cap) || [];
-      for (const t of found) if (t.threadId && !byThread.has(t.threadId)) byThread.set(t.threadId, t);
-    };
-    if (labQ) await ingest(`${identityQ} ${labQ}`, 8);   // (A) точный: клиент И лаборатория
-    await ingest(identityQ, 6);                          // (B) полнота: только клиент
-
-    const scored = [...byThread.values()].map(t => ({ t, sc: score(t) }));
-
-    // ⭐ Body-level confirmation — order data (телефон/имя) often sits inside the FIRST message body
-    // or an attachment table, NOT the subject. For threads not already «high», fetch the body and
-    // upgrade confidence when the phone/name is confirmed there. Bounded — the body fetch is the
-    // expensive part, so we scan only the newest few candidates. Per-thread best-effort.
-    const BODY_SCAN_MAX = parseInt(process.env.CLIENT_EMAIL_BODY_SCAN_MAX, 10) || 4;
-    if (typeof gmail.getThread === 'function' && (localPhone || namesLc.length)) {
-      const candidates = scored
-        .filter(x => x.sc.confidence !== 'high')
-        .sort((a, b) => new Date(b.t.date || 0) - new Date(a.t.date || 0))
-        .slice(0, BODY_SCAN_MAX);
-      for (const x of candidates) {
-        try {
-          const full = await gmail.getThread(x.t.threadId, 'full');
-          const msg = full && full.messages && full.messages[0];
-          if (!msg) continue;
-          const body  = (gmail.getMessageBody ? gmail.getMessageBody(msg) : '').toLowerCase();
-          const files = (gmail.getAttachmentFilenames ? gmail.getAttachmentFilenames(msg) : []).join(' ').toLowerCase();
-          const phoneInBody = !!localPhone && (body.includes(localPhone) || files.includes(localPhone));
-          const nameInBody  = namesLc.some(n => n && body.includes(n));
-          if (phoneInBody && !x.sc.signals.includes('телефон')) x.sc.signals.push('телефон в письме');
-          if (nameInBody && !x.sc.signals.some(s => s.startsWith('имя'))) x.sc.signals.push('имя в письме');
-          const involvesLab = x.sc.signals.includes('лаборатория');
-          if ((phoneInBody || nameInBody) && involvesLab) x.sc.confidence = 'high';
-          else if ((phoneInBody || nameInBody) && x.sc.confidence === 'low') x.sc.confidence = 'medium';
-          x.sc.match_by = x.sc.signals.join(' + ') || x.sc.match_by;
-        } catch (_) { /* one bad thread never aborts the scan */ }
-      }
-    }
-
+    const found = await gmail.searchThreads(identityQ, 12) || [];
     const RANK = { high: 3, medium: 2, low: 1 };
-    const emails = scored.map(({ t, sc }) => ({
-      kind: 'gmail', from: t.from || null, to: t.to || null, subject: t.subject || null,
-      at: t.date || null, has_attachment: !!t.hasAttachment, thread_id: t.threadId,
-      message_count: t.messageCount || 0,
-      match_by: sc.match_by, confidence: sc.confidence, signals: sc.signals,
-    })).sort((a, b) => (RANK[b.confidence] - RANK[a.confidence]) || (new Date(b.at || 0) - new Date(a.at || 0)));
+    const emails = found
+      .map(t => ({ t, sc: score(t) }))
+      .filter(x => x.sc)                                   // выкидываем письма без имени клиента в теме
+      .map(({ t, sc }) => ({
+        kind: 'gmail', from: t.from || null, to: t.to || null, subject: t.subject || null,
+        at: t.date || null, has_attachment: !!t.hasAttachment, thread_id: t.threadId,
+        message_count: t.messageCount || 0,
+        match_by: sc.match_by, confidence: sc.confidence, signals: sc.signals,
+      }))
+      .sort((a, b) => (RANK[b.confidence] - RANK[a.confidence]) || (new Date(b.at || 0) - new Date(a.at || 0)));
 
     return {
       found: emails.length > 0, emails, searched_names: names,
-      searched_phone: localPhone || null, searched_labs: labEmails,
-      reason: emails.length ? null : 'Заказ запущен, но писем по заказу в почте не найдено.',
+      reason: emails.length ? null : 'Писем с именем клиента в теме не найдено.',
     };
   } catch (e) {
     return { found: false, reason: 'Почта недоступна: ' + e.message, emails: [] };

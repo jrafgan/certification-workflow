@@ -97,20 +97,14 @@ test('card: picking a non-existent row → falls back to newest', async () => {
   assert.strictEqual(r.card.company_name, 'Новая заявка');
 });
 
-// ── clientEmails DEEP-MATCH (stubbed gmail + lab registry, no network) ──
-// A launched order in «Декларация» → search Gmail, rank threads by name/phone/lab signals.
+// ── clientEmails: match «Декларация» client NAME × email SUBJECT (no lab-based high, no body-scan) ──
 const LAB = {
   SS:               { email: 'mng-1@kyrgyz-test.kg' },
   DS_NO_WORKSHOP:   { email: 'svnsert7@gmail.com' },
   DS_WITH_WORKSHOP: { email: 'servisstan@internet.ru' },
 };
 function emailDeps(threads) {
-  return {
-    labRecipients: LAB,
-    gmail: { searchThreads: async (q, cap) => threads.slice(0, cap).map(t => ({ ...t, __q: q })) },
-    // stub the entity: launched order for «ИП Умарова», phone 700111222.
-    _entity: true,
-  };
+  return { labRecipients: LAB, gmail: { searchThreads: async (q, cap) => threads.slice(0, cap) } };
 }
 // clientEmails builds the entity via clientEntityService.buildByPhone — stub that through require cache.
 function withEntity(entity, fn) {
@@ -137,61 +131,39 @@ test('emails: gate — order still «Запустить» → not sent to lab ye
   assert.strictEqual(r.found, false);
   assert.ok(/Запустить/.test(r.reason));
 });
-test('emails: name in subject + lab counterparty → confidence high', async () => {
+test('emails: specific Declaration name in subject → high', async () => {
   const threads = [{ threadId: 't1', subject: 'ИП Умарова декларация', from: 'Айгерим <svnsert7@gmail.com>', to: 'me', date: new Date('2026-07-01') }];
   const r = await withEntity(LAUNCHED_ENT, () => svc.clientEmails('+996700111222', emailDeps(threads)));
   assert.strictEqual(r.found, true);
   assert.strictEqual(r.emails[0].confidence, 'high');
-  assert.ok(r.emails[0].signals.includes('лаборатория'));
   assert.ok(r.emails[0].signals.includes('имя в теме'));
+  assert.ok(r.emails[0].signals.includes('от лаборатории'));   // info tag only (does not drive confidence)
 });
-test('emails: lab counterparty but subject unrelated → medium (not high)', async () => {
-  const threads = [{ threadId: 't2', subject: 'общий вопрос', from: 'me', to: 'servisstan@internet.ru', date: new Date('2026-06-20') }];
+test('emails: subject without the client name → dropped (not this client\'s letter)', async () => {
+  const threads = [{ threadId: 't2', subject: 'общий вопрос по оплате', from: 'me', to: 'servisstan@internet.ru', date: new Date('2026-06-20') }];
   const r = await withEntity(LAUNCHED_ENT, () => svc.clientEmails('+996700111222', emailDeps(threads)));
+  assert.strictEqual(r.found, false);                           // адрес лаборатории есть, но имени в теме нет → не матч
+});
+test('emails: short/generic name in subject → medium (never auto-high)', async () => {
+  const ent = { found: true, in_declaration: true, legal_entity: 'AMIR', orders: [{ client: 'AMIR', status: 'Запущен' }] };
+  const threads = [{ threadId: 't3', subject: 'AMIR order update', from: 'x@y.z', to: 'me', date: new Date('2026-06-10') }];
+  const r = await withEntity(ent, () => svc.clientEmails('+996700111222', emailDeps(threads)));
   assert.strictEqual(r.emails[0].confidence, 'medium');
 });
-test('emails: ranked high→low and deduped by thread_id', async () => {
+test('emails: client name only in BODY, not subject → NOT matched (kills webinar false positives)', async () => {
+  const threads = [{ threadId: 't4', subject: 'Explore AI Innovations: Agents 2.0 Webinar', from: 'news@promo.co', to: 'me', date: new Date('2026-07-05') }];
+  const r = await withEntity(LAUNCHED_ENT, () => svc.clientEmails('+996700111222', emailDeps(threads)));
+  assert.strictEqual(r.found, false);                           // тело не читаем → имя в теле не даёт ложный матч
+});
+test('emails: high (specific) ranks before medium (short)', async () => {
+  const ent = { found: true, in_declaration: true, legal_entity: 'ИП Умарова', orders: [{ client: 'ИП Умарова', status: 'З' }, { client: 'AMIR', status: 'З' }] };
   const threads = [
-    { threadId: 'low',  subject: 'посторонняя тема', from: 'x@y.z', to: 'me', date: new Date('2026-07-05') },
-    { threadId: 'high', subject: 'ИП Умарова', from: 'mng-1@kyrgyz-test.kg', to: 'me', date: new Date('2026-06-01') },
-    { threadId: 'high', subject: 'ИП Умарова', from: 'mng-1@kyrgyz-test.kg', to: 'me', date: new Date('2026-06-01') }, // dup
+    { threadId: 'short', subject: 'AMIR', from: 'x@y.z', to: 'me', date: new Date('2026-07-05') },
+    { threadId: 'full',  subject: 'ИП Умарова оригинал', from: 'mng-1@kyrgyz-test.kg', to: 'me', date: new Date('2026-06-01') },
   ];
-  const r = await withEntity(LAUNCHED_ENT, () => svc.clientEmails('+996700111222', emailDeps(threads)));
-  assert.strictEqual(r.emails[0].thread_id, 'high');           // high ranks first despite older date
-  assert.strictEqual(r.emails.filter(e => e.thread_id === 'high').length, 1); // deduped
-});
-
-// gmail stub WITH body access → exercises the ⭐ body-scan phase.
-function emailDepsBody(threads, bodies /* {threadId: {body, files}} */) {
-  return {
-    labRecipients: LAB,
-    gmail: {
-      searchThreads: async (q, cap) => threads.slice(0, cap),
-      getThread: async (id) => ({ messages: [{ __id: id }] }),
-      getMessageBody: (m) => (bodies[m.__id] && bodies[m.__id].body) || '',
-      getAttachmentFilenames: (m) => (bodies[m.__id] && bodies[m.__id].files) || [],
-    },
-  };
-}
-test('emails: lab thread, phone confirmed in BODY → upgraded to high', async () => {
-  const threads = [{ threadId: 'b1', subject: 'заявка', from: 'me', to: 'servisstan@internet.ru', date: new Date('2026-06-15') }];
-  const bodies  = { b1: { body: 'клиент, тел 0700111222, оформляем декларацию', files: [] } };
-  const r = await withEntity(LAUNCHED_ENT, () => svc.clientEmails('+996700111222', emailDepsBody(threads, bodies)));
-  assert.strictEqual(r.emails[0].confidence, 'high');          // lab (medium) + phone-in-body → high
-  assert.ok(r.emails[0].signals.includes('телефон в письме'));
-});
-test('emails: no lab, name only in body → upgraded low→medium', async () => {
-  const threads = [{ threadId: 'b2', subject: 'без темы', from: 'x@y.z', to: 'me', date: new Date('2026-06-10') }];
-  const bodies  = { b2: { body: 'по клиенту ип умарова готовим пакет', files: [] } };
-  const r = await withEntity(LAUNCHED_ENT, () => svc.clientEmails('+996700111222', emailDepsBody(threads, bodies)));
-  assert.strictEqual(r.emails[0].confidence, 'medium');
-  assert.ok(r.emails[0].signals.includes('имя в письме'));
-});
-test('emails: body scan finds nothing → confidence unchanged', async () => {
-  const threads = [{ threadId: 'b3', subject: 'спам', from: 'x@y.z', to: 'me', date: new Date('2026-06-10') }];
-  const bodies  = { b3: { body: 'реклама, ничего общего', files: [] } };
-  const r = await withEntity(LAUNCHED_ENT, () => svc.clientEmails('+996700111222', emailDepsBody(threads, bodies)));
-  assert.strictEqual(r.emails[0].confidence, 'low');
+  const r = await withEntity(ent, () => svc.clientEmails('+996700111222', emailDeps(threads)));
+  assert.strictEqual(r.emails[0].thread_id, 'full');            // high before medium despite older date
+  assert.strictEqual(r.emails[0].confidence, 'high');
 });
 
 (async () => {
