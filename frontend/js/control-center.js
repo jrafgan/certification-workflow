@@ -686,9 +686,10 @@
     const items = d.proposals || [];
     list.innerHTML = items.length ? items.map(l => {
       const amb = (l.ambiguous_phones || []).length ? ` <span class="muted">· другие кандидаты: ${esc((l.ambiguous_phones || []).join(', '))}</span>` : '';
+      const subjName = (l.subject_name && l.subject_name !== l.client_name) ? ` <span class="muted">(письмо про: ${esc(l.subject_name)})</span>` : '';
       return `<div class="td-info" style="margin:8px 0">
         <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
-          <span>${elConf(l.confidence)} <b>${esc(l.client_name || 'клиент ?')}</b> · номер <b>${esc(l.phone_key || '—')}</b>${amb}</span>
+          <span>${elConf(l.confidence)} <b>${esc(l.client_name || 'клиент ?')}</b>${subjName} · номер <b>${esc(l.phone_key || '—')}</b>${amb}</span>
           <span class="muted">${l.last_message_at ? new Date(l.last_message_at).toLocaleDateString('ru-RU') : ''}${(l.signals || []).length ? ' · ' + esc((l.signals || []).join(' + ')) : ''}</span>
         </div>
         <div style="margin-top:6px">📧 ${esc(l.subject || '(без темы)')} <span class="muted">от ${esc(String(l.from_addr || '').replace(/<.*>/, '').slice(0, 40))}</span></div>

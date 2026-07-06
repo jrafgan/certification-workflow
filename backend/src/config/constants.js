@@ -108,10 +108,13 @@ const LAB_COMM_POLL_CRON = process.env.LAB_COMM_POLL_CRON || '*/30 * * * *';
 const LAB_COMM_MAX_CONSECUTIVE_ERRORS = 3;
 const LAB_COMM_BATCH_DELAY_MS         = 200;
 
+// SLA правило оператора (2026-07-06): 2 дня на получение МАКЕТА от лаборатории; 4 дня на получение
+// ОРИГИНАЛА после отправки подтверждённого макета. По истечении срока крон lab-poll предлагает
+// напоминание лаборатории. Переопределяется env, но по умолчанию — эти бизнес-сроки.
 const LAB_COMM_DEFAULT_LAYOUT_SLA_DAYS =
-  parseInt(process.env.LAB_COMM_DEFAULT_LAYOUT_SLA_DAYS, 10) || 5;
+  parseInt(process.env.LAB_COMM_DEFAULT_LAYOUT_SLA_DAYS, 10) || 2;
 const LAB_COMM_DEFAULT_ORIGINAL_SLA_DAYS =
-  parseInt(process.env.LAB_COMM_DEFAULT_ORIGINAL_SLA_DAYS, 10) || 10;
+  parseInt(process.env.LAB_COMM_DEFAULT_ORIGINAL_SLA_DAYS, 10) || 4;
 
 const LAB_COMM_RISK_HIGH_REPLY_HOURS      = 12;
 const LAB_COMM_RISK_CRITICAL_REPLY_HOURS  = 48;

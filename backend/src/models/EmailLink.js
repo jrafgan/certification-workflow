@@ -30,7 +30,8 @@ const emailLinkSchema = new Schema({
   // The bridge: «Декларация» rows of this phone that justified the link + the client name (col D).
   sheet_rows:      { type: [String], default: [] },
   order_id:        { type: Schema.Types.ObjectId, ref: 'Order', default: null }, // if materialized
-  client_name:     { type: String, trim: true },
+  client_name:     { type: String, trim: true },   // phone's PRIMARY юр.лицо (entity)
+  subject_name:    { type: String, trim: true },   // юр.лицо from THIS letter's subject (may differ)
 
   // Snapshot of the letter — lets the card/review render without another Gmail call.
   subject:         { type: String, trim: true },

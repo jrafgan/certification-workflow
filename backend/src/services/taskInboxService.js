@@ -595,19 +595,22 @@ async function clientEmails(phone, deps = {}) {
   const identityQ = names.length > 1 ? `(${names.map(quote).join(' OR ')})` : quote(names[0]);
 
   // Score by Declaration-name-in-subject ONLY. null → the subject carries no client name (not a match).
+  // Returns the ACTUAL matched юр.лицо (subject_name): a phone may host several юр.лиц (col D), so the
+  // letter's own юр.лицо (from its subject) is kept alongside the phone's primary name.
   function score(t) {
     const subj = (t.subject || '').toLowerCase();
-    let matched = null, matchedSpecific = false;
-    for (const n of namesLc) {
-      if (n && subj.includes(n) && (!matched || (isSpecific(n) && !matchedSpecific))) {
-        matched = n; matchedSpecific = isSpecific(n);
+    let matchedIdx = -1, matchedSpecific = false;
+    for (let i = 0; i < namesLc.length; i++) {
+      const n = namesLc[i];
+      if (n && subj.includes(n) && (matchedIdx < 0 || (isSpecific(n) && !matchedSpecific))) {
+        matchedIdx = i; matchedSpecific = isSpecific(n);
       }
     }
-    if (!matched) return null;
+    if (matchedIdx < 0) return null;
     const hay = `${t.from || ''} ${t.to || ''}`.toLowerCase();
     const sig = ['имя в теме'];
     if (labEmails.some(e => hay.includes(e))) sig.push('от лаборатории');   // справочно, не влияет на уверенность
-    return { confidence: matchedSpecific ? 'high' : 'medium', match_by: sig.join(' + '), signals: sig };
+    return { confidence: matchedSpecific ? 'high' : 'medium', match_by: sig.join(' + '), signals: sig, subject_name: names[matchedIdx] };
   }
 
   try {
@@ -621,7 +624,7 @@ async function clientEmails(phone, deps = {}) {
         kind: 'gmail', from: t.from || null, to: t.to || null, subject: t.subject || null,
         at: t.date || null, has_attachment: !!t.hasAttachment, thread_id: t.threadId,
         message_count: t.messageCount || 0,
-        match_by: sc.match_by, confidence: sc.confidence, signals: sc.signals,
+        match_by: sc.match_by, confidence: sc.confidence, signals: sc.signals, subject_name: sc.subject_name || null,
       }))
       .sort((a, b) => (RANK[b.confidence] - RANK[a.confidence]) || (new Date(b.at || 0) - new Date(a.at || 0)));
 

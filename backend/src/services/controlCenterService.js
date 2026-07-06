@@ -12,6 +12,7 @@
 // gracefully instead of hanging on buffered queries.
 
 const mongoose = require('mongoose');
+const constants        = require('../config/constants');
 
 const leadConversion   = require('./leadConversionService');
 const draftEmail       = require('./draftEmailService');
@@ -495,8 +496,8 @@ function orderDangers(order = {}, now = Date.now()) {
   const client = order.client?.companyName || order.client?.name || 'клиент';
   const ref = order.sheet_row_id ? `order_row:${order.sheet_row_id}` : `order:${order._id}`;
   const oid = String(order._id);
-  const layoutSla = order.laboratory?.expectedLayoutDays || 5;
-  const origSla = order.laboratory?.expectedOriginalDays || 10;
+  const layoutSla = order.laboratory?.expectedLayoutDays || constants.LAB_COMM_DEFAULT_LAYOUT_SLA_DAYS;
+  const origSla = order.laboratory?.expectedOriginalDays || constants.LAB_COMM_DEFAULT_ORIGINAL_SLA_DAYS;
   const out = [];
   const add = (type, severity, label, detail) => out.push({ type, severity, label, detail, order_id: oid, ref });
 

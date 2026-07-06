@@ -18,8 +18,8 @@ const errorUtils = require('../utils/errorUtils');
 const MS_PER_DAY = 86_400_000;
 
 // Default SLAs when the order/laboratory carries none (aligned with lab comm defaults).
-const DEFAULT_LAYOUT_SLA_DAYS   = parseInt(process.env.LAB_COMM_DEFAULT_LAYOUT_SLA_DAYS, 10)   || 5;
-const DEFAULT_ORIGINAL_SLA_DAYS = parseInt(process.env.LAB_COMM_DEFAULT_ORIGINAL_SLA_DAYS, 10) || 10;
+const DEFAULT_LAYOUT_SLA_DAYS   = parseInt(process.env.LAB_COMM_DEFAULT_LAYOUT_SLA_DAYS, 10)   || 2;
+const DEFAULT_ORIGINAL_SLA_DAYS = parseInt(process.env.LAB_COMM_DEFAULT_ORIGINAL_SLA_DAYS, 10) || 4;
 
 const IMPACT =
   'If approved, the operator sends this email to the laboratory. Nothing is sent automatically; ' +

@@ -57,7 +57,8 @@ function decideLinks(input = []) {
       decisions.push({
         gmail_thread_id: e.thread_id,
         phone_key:       p.phone_key,
-        client_name:     p.client_name || null,
+        client_name:     p.client_name || null,          // номер's primary юр.лицо
+        subject_name:    e.subject_name || null,          // юр.лицо из ТЕМЫ этого письма (может отличаться)
         sheet_rows:      p.sheet_rows || [],
         order_id:        p.order_id || null,
         subject:         e.subject || null,
@@ -112,7 +113,7 @@ async function scan({ limit = 15, deps = {} } = {}) {
       order_id:    (last && last.order_id) || null,
       emails:      (deep.emails || []).map(e => ({
         thread_id: e.thread_id, subject: e.subject, from: e.from, to: e.to,
-        at: e.at, confidence: e.confidence, signals: e.signals,
+        at: e.at, confidence: e.confidence, signals: e.signals, subject_name: e.subject_name,
       })),
     });
   }
@@ -213,7 +214,7 @@ async function relink({ gmail_thread_id, from_phone, to_phone, operator } = {}, 
     gmail_thread_id, phone_key: toKey, status: 'confirmed', source: 'operator',
     set_by: operator || 'operator', client_name, sheet_rows, order_id, reverified_at: new Date(),
   };
-  if (snap) { set.subject = snap.subject; set.from_addr = snap.from_addr; set.to_addr = snap.to_addr; set.last_message_at = snap.last_message_at; }
+  if (snap) { set.subject = snap.subject; set.subject_name = snap.subject_name; set.from_addr = snap.from_addr; set.to_addr = snap.to_addr; set.last_message_at = snap.last_message_at; }
   await EmailLink.updateOne({ gmail_thread_id, phone_key: toKey }, { $set: set }, { upsert: true });
   return { ok: true, rejected: fromKey || null, confirmed: toKey };
 }

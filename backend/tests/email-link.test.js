@@ -41,14 +41,15 @@ const KA = matchKey('+996700111222');   // phone A
 const KB = matchKey('+996700333444');   // phone B
 
 // ── decideLinks (pure) ──
-test('decide: high + unique thread → confirmed (auto)', () => {
+test('decide: high + unique thread → confirmed (auto), keeps subject_name', () => {
   const d = svc.decideLinks([
-    { phone_key: KA, client_name: 'ИП A', sheet_rows: ['10'], emails: [{ thread_id: 't1', confidence: 'high', signals: ['лаборатория', 'имя в теме'] }] },
+    { phone_key: KA, client_name: 'ИП A', sheet_rows: ['10'], emails: [{ thread_id: 't1', confidence: 'high', signals: ['имя в теме'], subject_name: 'ИП A-Мовлянбек' }] },
   ]);
   assert.strictEqual(d.length, 1);
   assert.strictEqual(d[0].status, 'confirmed');
   assert.strictEqual(d[0].source, 'auto');
   assert.strictEqual(d[0].phone_key, KA);
+  assert.strictEqual(d[0].subject_name, 'ИП A-Мовлянбек');  // юр.лицо из темы сохранено отдельно
 });
 test('decide: same thread high for TWO phones → both proposed, ambiguous_phones set', () => {
   const d = svc.decideLinks([
