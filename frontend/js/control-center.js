@@ -42,6 +42,11 @@
   }
   $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) show(b.dataset.screen); });
   $('#refresh').addEventListener('click', () => show(current));
+  // Авто-обновление «Задач»: новые заказы и НЕотвеченные сообщения WhatsApp появляются сами, без ↻.
+  // Обновляем ТОЛЬКО список слева — loadTasks не трогает открытую справа переписку/черновик оператора.
+  setInterval(() => {
+    if (current === 'tasks' && document.visibilityState === 'visible') { try { loadTasks(); } catch (_) {} }
+  }, 45000);
   $('#logout').addEventListener('click', async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/app/login.html'; });
   // Self-service password change — available to every logged-in user (operator + admin).
   $('#change-pass').addEventListener('click', async () => {
