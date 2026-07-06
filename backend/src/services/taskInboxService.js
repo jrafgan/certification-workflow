@@ -621,16 +621,44 @@ async function clientEmails(phone, deps = {}) {
     if (labQ) await ingest(`${identityQ} ${labQ}`, 8);   // (A) точный: клиент И лаборатория
     await ingest(identityQ, 6);                          // (B) полнота: только клиент
 
+    const scored = [...byThread.values()].map(t => ({ t, sc: score(t) }));
+
+    // ⭐ Body-level confirmation — order data (телефон/имя) often sits inside the FIRST message body
+    // or an attachment table, NOT the subject. For threads not already «high», fetch the body and
+    // upgrade confidence when the phone/name is confirmed there. Bounded — the body fetch is the
+    // expensive part, so we scan only the newest few candidates. Per-thread best-effort.
+    const BODY_SCAN_MAX = parseInt(process.env.CLIENT_EMAIL_BODY_SCAN_MAX, 10) || 4;
+    if (typeof gmail.getThread === 'function' && (localPhone || namesLc.length)) {
+      const candidates = scored
+        .filter(x => x.sc.confidence !== 'high')
+        .sort((a, b) => new Date(b.t.date || 0) - new Date(a.t.date || 0))
+        .slice(0, BODY_SCAN_MAX);
+      for (const x of candidates) {
+        try {
+          const full = await gmail.getThread(x.t.threadId, 'full');
+          const msg = full && full.messages && full.messages[0];
+          if (!msg) continue;
+          const body  = (gmail.getMessageBody ? gmail.getMessageBody(msg) : '').toLowerCase();
+          const files = (gmail.getAttachmentFilenames ? gmail.getAttachmentFilenames(msg) : []).join(' ').toLowerCase();
+          const phoneInBody = !!localPhone && (body.includes(localPhone) || files.includes(localPhone));
+          const nameInBody  = namesLc.some(n => n && body.includes(n));
+          if (phoneInBody && !x.sc.signals.includes('телефон')) x.sc.signals.push('телефон в письме');
+          if (nameInBody && !x.sc.signals.some(s => s.startsWith('имя'))) x.sc.signals.push('имя в письме');
+          const involvesLab = x.sc.signals.includes('лаборатория');
+          if ((phoneInBody || nameInBody) && involvesLab) x.sc.confidence = 'high';
+          else if ((phoneInBody || nameInBody) && x.sc.confidence === 'low') x.sc.confidence = 'medium';
+          x.sc.match_by = x.sc.signals.join(' + ') || x.sc.match_by;
+        } catch (_) { /* one bad thread never aborts the scan */ }
+      }
+    }
+
     const RANK = { high: 3, medium: 2, low: 1 };
-    const emails = [...byThread.values()].map(t => {
-      const sc = score(t);
-      return {
-        kind: 'gmail', from: t.from || null, to: t.to || null, subject: t.subject || null,
-        at: t.date || null, has_attachment: !!t.hasAttachment, thread_id: t.threadId,
-        message_count: t.messageCount || 0,
-        match_by: sc.match_by, confidence: sc.confidence, signals: sc.signals,
-      };
-    }).sort((a, b) => (RANK[b.confidence] - RANK[a.confidence]) || (new Date(b.at || 0) - new Date(a.at || 0)));
+    const emails = scored.map(({ t, sc }) => ({
+      kind: 'gmail', from: t.from || null, to: t.to || null, subject: t.subject || null,
+      at: t.date || null, has_attachment: !!t.hasAttachment, thread_id: t.threadId,
+      message_count: t.messageCount || 0,
+      match_by: sc.match_by, confidence: sc.confidence, signals: sc.signals,
+    })).sort((a, b) => (RANK[b.confidence] - RANK[a.confidence]) || (new Date(b.at || 0) - new Date(a.at || 0)));
 
     return {
       found: emails.length > 0, emails, searched_names: names,

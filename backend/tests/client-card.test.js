@@ -144,6 +144,39 @@ test('emails: ranked high→low and deduped by thread_id', async () => {
   assert.strictEqual(r.emails.filter(e => e.thread_id === 'high').length, 1); // deduped
 });
 
+// gmail stub WITH body access → exercises the ⭐ body-scan phase.
+function emailDepsBody(threads, bodies /* {threadId: {body, files}} */) {
+  return {
+    labRecipients: LAB,
+    gmail: {
+      searchThreads: async (q, cap) => threads.slice(0, cap),
+      getThread: async (id) => ({ messages: [{ __id: id }] }),
+      getMessageBody: (m) => (bodies[m.__id] && bodies[m.__id].body) || '',
+      getAttachmentFilenames: (m) => (bodies[m.__id] && bodies[m.__id].files) || [],
+    },
+  };
+}
+test('emails: lab thread, phone confirmed in BODY → upgraded to high', async () => {
+  const threads = [{ threadId: 'b1', subject: 'заявка', from: 'me', to: 'servisstan@internet.ru', date: new Date('2026-06-15') }];
+  const bodies  = { b1: { body: 'клиент, тел 0700111222, оформляем декларацию', files: [] } };
+  const r = await withEntity(LAUNCHED_ENT, () => svc.clientEmails('+996700111222', emailDepsBody(threads, bodies)));
+  assert.strictEqual(r.emails[0].confidence, 'high');          // lab (medium) + phone-in-body → high
+  assert.ok(r.emails[0].signals.includes('телефон в письме'));
+});
+test('emails: no lab, name only in body → upgraded low→medium', async () => {
+  const threads = [{ threadId: 'b2', subject: 'без темы', from: 'x@y.z', to: 'me', date: new Date('2026-06-10') }];
+  const bodies  = { b2: { body: 'по клиенту ип умарова готовим пакет', files: [] } };
+  const r = await withEntity(LAUNCHED_ENT, () => svc.clientEmails('+996700111222', emailDepsBody(threads, bodies)));
+  assert.strictEqual(r.emails[0].confidence, 'medium');
+  assert.ok(r.emails[0].signals.includes('имя в письме'));
+});
+test('emails: body scan finds nothing → confidence unchanged', async () => {
+  const threads = [{ threadId: 'b3', subject: 'спам', from: 'x@y.z', to: 'me', date: new Date('2026-06-10') }];
+  const bodies  = { b3: { body: 'реклама, ничего общего', files: [] } };
+  const r = await withEntity(LAUNCHED_ENT, () => svc.clientEmails('+996700111222', emailDepsBody(threads, bodies)));
+  assert.strictEqual(r.emails[0].confidence, 'low');
+});
+
 (async () => {
   console.log('\n[client-card]');
   for (const { name, fn } of queue) {
