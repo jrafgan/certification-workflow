@@ -11,7 +11,7 @@
 // defensive DB work. READ-ONLY toward the world: the only write is InboxThreadState (operator
 // UI state — read/done/snooze). Nothing here sends, changes status, or writes the Declaration.
 
-const { matchKey } = require('../utils/phoneUtils');
+const { matchKey, normalizeLocal } = require('../utils/phoneUtils');
 
 // A WhatsApp thread's canonical grouping key (one client = one row).
 function threadKey(m = {}) {
@@ -553,10 +553,19 @@ async function thread(phone, deps = {}) {
   };
 }
 
-// ─── Lazy: DIRECT Gmail search for a client's lab email (slow → separate from thread()) ──────
-// Same operator gate as thread(): only when the client is in «Декларация» with status ≠ «Запустить».
-// Searches the lab mailbox by client name (name = subject) via gmailClient. Best-effort. Called by
-// the panel AFTER the card renders, so an 8s Gmail round-trip never blocks the card. READ-ONLY.
+// ─── Lazy: DEEP Gmail match for a client's lab correspondence (slow → separate from thread()) ──
+// Same operator gate as thread(): only when the client is in «Декларация» with status ≠ «Запустить»
+// (an order actually sent to a lab is the only case where a lab email exists to find).
+//
+// DEEP-MATCH — instead of a bare name search, we layer the signals we actually have and rank every
+// thread by confidence + evidence (never auto-acts — see Workflow Auditor rules). Signals:
+//   • имя клиента в теме письма  — заказ уходит в лабораторию с юр.лицом в теме (сильный сигнал),
+//   • телефон клиента            — 9-значный локальный номер встречается в теме,
+//   • контрагент-лаборатория     — from/to = один из зарегистрированных адресов лабораторий
+//                                  (Бермет / Айгерим / Айсулуу) → письмо точно по заказу, не шум.
+// Two Gmail passes: (A) identity AND lab (precise) + (B) identity only (recall), merged & deduped,
+// каждый тред получает confidence high|medium|low. Best-effort, READ-ONLY. Called by the panel
+// AFTER the card renders, so an 8s Gmail round-trip never blocks the card.
 async function clientEmails(phone, deps = {}) {
   const key = matchKey(phone);
   if (!key) return { found: false, reason: 'bad_phone', emails: [] };
@@ -569,20 +578,64 @@ async function clientEmails(phone, deps = {}) {
     return { found: false, reason: 'Заказ на статусе «Запустить» — в лабораторию ещё не отправлен.', emails: [] };
 
   const names = [...new Set([ent.legal_entity, ...(ent.orders || []).map(o => o.client)].filter(Boolean))];
-  if (!names.length) return { found: false, reason: 'Имя клиента не определено.', emails: [] };
+  const localPhone = normalizeLocal(phone);                          // 9-значный локальный номер, как в теме
+  if (!names.length && !localPhone)
+    return { found: false, reason: 'Имя клиента и телефон не определены.', emails: [] };
+
+  // Контрагенты-лаборатории из единого реестра (env-overridable) — сигнал «это письмо по заказу».
+  const labCfg = deps.labRecipients || require('../config/labRecipients');
+  const labEmails = [...new Set([labCfg.SS, labCfg.DS_NO_WORKSHOP, labCfg.DS_WITH_WORKSHOP]
+    .map(l => l && l.email).filter(Boolean).map(e => e.toLowerCase()))];
+
+  const quote = s => `"${String(s).replace(/"/g, '')}"`;
+  const identity = [...names.map(quote), ...(localPhone ? [quote(localPhone)] : [])];
+  const identityQ = identity.length > 1 ? `(${identity.join(' OR ')})` : identity[0];
+  const labQ = labEmails.length ? `(${labEmails.map(e => `from:${e} OR to:${e}`).join(' OR ')})` : '';
+
+  const namesLc = names.map(n => n.toLowerCase());
+  // Score a thread from its metadata (from/to/subject) → confidence + human evidence string.
+  function score(t) {
+    const hay = `${t.from || ''} ${t.to || ''}`.toLowerCase();
+    const subj = (t.subject || '').toLowerCase();
+    const involvesLab = labEmails.some(e => hay.includes(e));
+    const nameInSubject = namesLc.some(n => n && subj.includes(n));
+    const phoneInSubject = !!localPhone && subj.includes(localPhone);
+    const sig = [];
+    if (involvesLab)    sig.push('лаборатория');
+    if (nameInSubject)  sig.push('имя в теме');
+    if (phoneInSubject) sig.push('телефон');
+    let confidence = 'low';
+    if (involvesLab && (nameInSubject || phoneInSubject)) confidence = 'high';
+    else if (involvesLab || nameInSubject)                confidence = 'medium';
+    return { confidence, match_by: sig.join(' + ') || 'совпадение по имени', signals: sig };
+  }
 
   try {
     const gmail = deps.gmail || require('../integrations/gmailClient');
-    const q = names.map(n => `"${String(n).replace(/"/g, '')}"`).join(' OR ');
-    const found = await gmail.searchThreads(q, 6);
-    const emails = (found || []).map(t => ({
-      kind: 'gmail', from: t.from || null, to: t.to || null, subject: t.subject || null,
-      at: t.date || null, has_attachment: !!t.hasAttachment, thread_id: t.threadId,
-      message_count: t.messageCount || 0, match_by: 'имя клиента = тема',
-    })).sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
+    const byThread = new Map();
+    const ingest = async (q, cap) => {
+      if (!q) return;
+      const found = await gmail.searchThreads(q, cap) || [];
+      for (const t of found) if (t.threadId && !byThread.has(t.threadId)) byThread.set(t.threadId, t);
+    };
+    if (labQ) await ingest(`${identityQ} ${labQ}`, 8);   // (A) точный: клиент И лаборатория
+    await ingest(identityQ, 6);                          // (B) полнота: только клиент
+
+    const RANK = { high: 3, medium: 2, low: 1 };
+    const emails = [...byThread.values()].map(t => {
+      const sc = score(t);
+      return {
+        kind: 'gmail', from: t.from || null, to: t.to || null, subject: t.subject || null,
+        at: t.date || null, has_attachment: !!t.hasAttachment, thread_id: t.threadId,
+        message_count: t.messageCount || 0,
+        match_by: sc.match_by, confidence: sc.confidence, signals: sc.signals,
+      };
+    }).sort((a, b) => (RANK[b.confidence] - RANK[a.confidence]) || (new Date(b.at || 0) - new Date(a.at || 0)));
+
     return {
       found: emails.length > 0, emails, searched_names: names,
-      reason: emails.length ? null : 'Заказ запущен, но письма в почте по имени клиента не найдены.',
+      searched_phone: localPhone || null, searched_labs: labEmails,
+      reason: emails.length ? null : 'Заказ запущен, но писем по заказу в почте не найдено.',
     };
   } catch (e) {
     return { found: false, reason: 'Почта недоступна: ' + e.message, emails: [] };

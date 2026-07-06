@@ -80,6 +80,70 @@ test('card: multiple rows same phone → match_count>1, newest wins', async () =
   assert.strictEqual(r.card.company_name, 'Новая заявка');   // newest by submitted_at
 });
 
+// ── clientEmails DEEP-MATCH (stubbed gmail + lab registry, no network) ──
+// A launched order in «Декларация» → search Gmail, rank threads by name/phone/lab signals.
+const LAB = {
+  SS:               { email: 'mng-1@kyrgyz-test.kg' },
+  DS_NO_WORKSHOP:   { email: 'svnsert7@gmail.com' },
+  DS_WITH_WORKSHOP: { email: 'servisstan@internet.ru' },
+};
+function emailDeps(threads) {
+  return {
+    labRecipients: LAB,
+    gmail: { searchThreads: async (q, cap) => threads.slice(0, cap).map(t => ({ ...t, __q: q })) },
+    // stub the entity: launched order for «ИП Умарова», phone 700111222.
+    _entity: true,
+  };
+}
+// clientEmails builds the entity via clientEntityService.buildByPhone — stub that through require cache.
+function withEntity(entity, fn) {
+  const path = require.resolve('../src/services/clientEntityService');
+  const orig = require.cache[path];
+  require.cache[path] = { id: path, filename: path, loaded: true, exports: { buildByPhone: async () => entity } };
+  return Promise.resolve(fn()).finally(() => { if (orig) require.cache[path] = orig; else delete require.cache[path]; });
+}
+const LAUNCHED_ENT = {
+  found: true, in_declaration: true, legal_entity: 'ИП Умарова',
+  orders: [{ client: 'ИП Умарова', status: 'Запущен' }],
+};
+
+test('emails: gate — client not in Declaration → not searched', async () => {
+  const r = await withEntity({ found: true, in_declaration: false }, () =>
+    svc.clientEmails('+996700111222', emailDeps([])));
+  assert.strictEqual(r.found, false);
+  assert.ok(/Деклара/i.test(r.reason));
+});
+test('emails: gate — order still «Запустить» → not sent to lab yet', async () => {
+  const r = await withEntity(
+    { found: true, in_declaration: true, legal_entity: 'ИП Умарова', orders: [{ client: 'ИП Умарова', status: 'Запустить' }] },
+    () => svc.clientEmails('+996700111222', emailDeps([])));
+  assert.strictEqual(r.found, false);
+  assert.ok(/Запустить/.test(r.reason));
+});
+test('emails: name in subject + lab counterparty → confidence high', async () => {
+  const threads = [{ threadId: 't1', subject: 'ИП Умарова декларация', from: 'Айгерим <svnsert7@gmail.com>', to: 'me', date: new Date('2026-07-01') }];
+  const r = await withEntity(LAUNCHED_ENT, () => svc.clientEmails('+996700111222', emailDeps(threads)));
+  assert.strictEqual(r.found, true);
+  assert.strictEqual(r.emails[0].confidence, 'high');
+  assert.ok(r.emails[0].signals.includes('лаборатория'));
+  assert.ok(r.emails[0].signals.includes('имя в теме'));
+});
+test('emails: lab counterparty but subject unrelated → medium (not high)', async () => {
+  const threads = [{ threadId: 't2', subject: 'общий вопрос', from: 'me', to: 'servisstan@internet.ru', date: new Date('2026-06-20') }];
+  const r = await withEntity(LAUNCHED_ENT, () => svc.clientEmails('+996700111222', emailDeps(threads)));
+  assert.strictEqual(r.emails[0].confidence, 'medium');
+});
+test('emails: ranked high→low and deduped by thread_id', async () => {
+  const threads = [
+    { threadId: 'low',  subject: 'посторонняя тема', from: 'x@y.z', to: 'me', date: new Date('2026-07-05') },
+    { threadId: 'high', subject: 'ИП Умарова', from: 'mng-1@kyrgyz-test.kg', to: 'me', date: new Date('2026-06-01') },
+    { threadId: 'high', subject: 'ИП Умарова', from: 'mng-1@kyrgyz-test.kg', to: 'me', date: new Date('2026-06-01') }, // dup
+  ];
+  const r = await withEntity(LAUNCHED_ENT, () => svc.clientEmails('+996700111222', emailDeps(threads)));
+  assert.strictEqual(r.emails[0].thread_id, 'high');           // high ranks first despite older date
+  assert.strictEqual(r.emails.filter(e => e.thread_id === 'high').length, 1); // deduped
+});
+
 (async () => {
   console.log('\n[client-card]');
   for (const { name, fn } of queue) {

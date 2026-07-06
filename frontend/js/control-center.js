@@ -288,8 +288,12 @@
     let r; try { r = await getJSON(api('/client-emails?phone=' + encodeURIComponent(phone))); } catch (_) { host.innerHTML = '<span class="muted">Почта недоступна.</span>'; return; }
     if (!r || !r.emails || !r.emails.length) { host.innerHTML = `<span class="muted">${esc((r && r.reason) || 'Писем в почте не найдено.')}</span>`; return; }
     host.className = '';
-    host.innerHTML = '<div class="td-sec-h">Письма в почте (найдены по имени клиента)</div>' + r.emails.map(e =>
-      `<div class="td-eh">📧 <span class="muted">${e.at ? new Date(e.at).toLocaleString('ru-RU') : ''}</span> · ${esc(e.subject || '(без темы)')}${e.has_attachment ? ' · 📎' : ''} · от ${esc((e.from || '').replace(/<.*>/, '').slice(0, 40))} <span class="muted">(${esc(e.match_by || '')})</span></div>`).join('');
+    const confChip = (c) => {
+      const m = { high: ['точное', '#dcfce7', '#166534'], medium: ['вероятное', '#fef9c3', '#854d0e'], low: ['слабое', '#f1f5f9', '#64748b'] }[c];
+      return m ? `<span class="tk-tag" style="background:${m[1]};color:${m[2]}">${m[0]}</span> ` : '';
+    };
+    host.innerHTML = '<div class="td-sec-h">Письма в почте (по имени, телефону и лаборатории)</div>' + r.emails.map(e =>
+      `<div class="td-eh">${confChip(e.confidence)}📧 <span class="muted">${e.at ? new Date(e.at).toLocaleString('ru-RU') : ''}</span> · ${esc(e.subject || '(без темы)')}${e.has_attachment ? ' · 📎' : ''} · от ${esc((e.from || '').replace(/<.*>/, '').slice(0, 40))} <span class="muted">(${esc(e.match_by || '')})</span></div>`).join('');
   }
   async function openThread(phone) {
     const pane = $('#task-detail'); pane.innerHTML = '<div class="muted">загрузка…</div>';
