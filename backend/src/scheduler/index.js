@@ -7,6 +7,7 @@ const declarationOrder = require('../services/declarationOrderService');
 const draftEmail       = require('../services/draftEmailService');
 const leadRecovery     = require('../services/leadRecoveryService');
 const autoResponder    = require('../services/whatsappAutoResponderService');
+const emailLink        = require('../services/emailLinkService');
 const newFormClient    = require('../integrations/newFormClient');
 const { LAB_COMM_POLL_CRON } = require('../config/constants');
 
@@ -27,6 +28,11 @@ const ORDER_SYNC_DRAFT_LIMIT = parseInt(process.env.ORDER_SYNC_DRAFT_LIMIT, 10) 
 // Cron for the Lead Recovery scan — «посчитали, клиент пропал» → предложить оператору
 // напоминание в WhatsApp. По умолчанию каждые 30 минут. Env: LEAD_RECOVERY_CRON.
 const LEAD_RECOVERY_CRON = process.env.LEAD_RECOVERY_CRON || '*/30 * * * *';
+
+// Cron for building письмо↔номер links (email_links) — deep-match lab letters to clients, auto-confirm
+// only high+unique, propose the rest. По умолчанию раз в час; cap phones/run. Env: EMAIL_LINK_SCAN_CRON.
+const EMAIL_LINK_SCAN_CRON  = process.env.EMAIL_LINK_SCAN_CRON || '17 * * * *';
+const EMAIL_LINK_SCAN_LIMIT = parseInt(process.env.EMAIL_LINK_SCAN_LIMIT, 10) || 20;
 // Cap on NEW recovery reminders per run — избегаем флуда очереди на первом бэклоге.
 const LEAD_RECOVERY_LIMIT = parseInt(process.env.LEAD_RECOVERY_LIMIT, 10) || 25;
 
@@ -38,6 +44,7 @@ let _scanRunning = false;
 let _orderSyncRunning = false;
 let _recoveryRunning = false;
 let _autoResponderRunning = false;
+let _emailLinkRunning = false;
 
 async function _runAutoResponderPoll() {
   if (_autoResponderRunning) return;
@@ -146,6 +153,24 @@ async function _runLeadRecoveryScan() {
   }
 }
 
+// Построить связи письмо↔номер: deep-match писем лабораторий к клиентам, авто-подтвердить только
+// high+единственный номер, остальное — предложить оператору. Output-only (пишет лишь email_links,
+// ничего не отправляет). Тихо переживает недоступность Gmail. Ошибки не роняют планировщик.
+async function _runEmailLinkScan() {
+  if (_emailLinkRunning) { console.log('[scheduler] Email-link scan skipped — previous run still in progress'); return; }
+  _emailLinkRunning = true;
+  try {
+    const r = await emailLink.scan({ limit: EMAIL_LINK_SCAN_LIMIT });
+    if (r && (r.confirmed || r.proposed)) {
+      console.log(`[scheduler] Email-link scan — phones: ${r.scanned_phones}, confirmed: ${r.confirmed}, proposed: ${r.proposed}, operator_locked: ${r.operator_locked}`);
+    }
+  } catch (err) {
+    console.error('[scheduler] Email-link scan failed:', err.message);
+  } finally {
+    _emailLinkRunning = false;
+  }
+}
+
 function startScheduler() {
   const tz = process.env.SCHEDULER_TIMEZONE || 'UTC';
 
@@ -182,6 +207,13 @@ function startScheduler() {
     console.log(`[scheduler] Auto-responder poll scheduled: ${WA_AUTORESPONDER_POLL_CRON} (mode=${process.env.WA_AUTORESPONDER_MODE || 'shadow'})`);
   } else {
     console.error(`[scheduler] Invalid WA_AUTORESPONDER_POLL_CRON: "${WA_AUTORESPONDER_POLL_CRON}". Auto-responder poll not started.`);
+  }
+
+  if (cron.validate(EMAIL_LINK_SCAN_CRON)) {
+    cron.schedule(EMAIL_LINK_SCAN_CRON, _runEmailLinkScan, { timezone: tz });
+    console.log(`[scheduler] Email-link scan scheduled: ${EMAIL_LINK_SCAN_CRON}`);
+  } else {
+    console.error(`[scheduler] Invalid EMAIL_LINK_SCAN_CRON: "${EMAIL_LINK_SCAN_CRON}". Email-link scan not started.`);
   }
 }
 

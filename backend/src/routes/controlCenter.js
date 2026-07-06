@@ -44,6 +44,12 @@ router.get('/autoreplies', async (req, res, next) => { try { res.json(await cc.a
 router.get('/client-emails', async (req, res, next) => { try { res.json(await cc.clientEmails(req.query.phone)); } catch (e) { next(e); } });
 // Карточка заявки по выбранной строке формы (переключатель, когда по номеру несколько заявок).
 router.get('/application-card', async (req, res, next) => { try { res.json(await cc.applicationCard(req.query.phone, req.query.sheet_row)); } catch (e) { next(e); } });
+// Связи письмо↔номер: очередь предложений для оператора + его решения (confirm/reject/relink).
+router.get('/email-links', async (req, res, next) => { try { res.json(await cc.emailLinkProposals({ limit: req.query.limit })); } catch (e) { next(e); } });
+router.post('/email-links/decide', async (req, res, next) => { try {
+  const { gmail_thread_id, phone_key, from_phone, to_phone, action } = req.body || {};
+  res.json(await cc.emailLinkDecide({ gmail_thread_id, phone_key, from_phone, to_phone, action, actor: req.user }));
+} catch (e) { next(e); } });
 // Неотвеченные письма — живой список цепочек Gmail, где мы так и не ответили (последнее
 // сообщение не от нас). Показывает тему, текст и файл последнего сообщения.
 router.get('/emails-unanswered', async (req, res, next) => {

@@ -31,7 +31,7 @@
   const offline = (msg) => `<div class="offline">${esc(msg || 'Нет подключения к базе данных. Запустите MongoDB — интерфейс работает, данные появятся после подключения.')}</div>`;
 
   // ── навигация ───────────────────────────────────────────────────────────
-  const SCREENS = { tasks: loadTasks, dashboard: loadAttention, inbox: loadInbox, emails: loadEmails, drafts: loadDrafts, autoreplies: loadAutoReplies, pipeline: loadPipeline, chat: loadChat, kb: loadKb, audit: loadAudit, users: loadUsers, 'first-contact': loadFirstContact, stats: loadStats };
+  const SCREENS = { tasks: loadTasks, dashboard: loadAttention, inbox: loadInbox, emails: loadEmails, drafts: loadDrafts, autoreplies: loadAutoReplies, 'email-links': loadEmailLinks, pipeline: loadPipeline, chat: loadChat, kb: loadKb, audit: loadAudit, users: loadUsers, 'first-contact': loadFirstContact, stats: loadStats };
   let current = 'tasks';
   function show(name) {
     current = name;
@@ -327,7 +327,8 @@
       const m = { high: ['точное', '#dcfce7', '#166534'], medium: ['вероятное', '#fef9c3', '#854d0e'], low: ['слабое', '#f1f5f9', '#64748b'] }[c];
       return m ? `<span class="tk-tag" style="background:${m[1]};color:${m[2]}">${m[0]}</span> ` : '';
     };
-    host.innerHTML = '<div class="td-sec-h">Письма в почте (по имени, телефону и лаборатории)</div>' + r.emails.map(e =>
+    const head = r.from_cache ? 'Письма (подтверждённые связи)' : 'Письма в почте (по имени, телефону и лаборатории)';
+    host.innerHTML = `<div class="td-sec-h">${head}</div>` + r.emails.map(e =>
       `<div class="td-eh">${confChip(e.confidence)}📧 <span class="muted">${e.at ? new Date(e.at).toLocaleString('ru-RU') : ''}</span> · ${esc(e.subject || '(без темы)')}${e.has_attachment ? ' · 📎' : ''} · от ${esc((e.from || '').replace(/<.*>/, '').slice(0, 40))} <span class="muted">(${esc(e.match_by || '')})</span></div>`).join('');
   }
   async function openThread(phone) {
@@ -672,6 +673,45 @@
   document.addEventListener('click', e => {
     const b = e.target.closest('button[data-ar-filter]'); if (!b) return;
     arFilter = b.dataset.arFilter; loadAutoReplies();
+  });
+
+  // ── Связи писем ↔ номер: очередь предложений, где агент сомневается, к кому относится письмо ──
+  const elConf = (c) => { const m = { high: ['точное', '#dcfce7', '#166534'], medium: ['вероятное', '#fef9c3', '#854d0e'], low: ['слабое', '#f1f5f9', '#64748b'] }[c]; return m ? `<span class="tk-tag" style="background:${m[1]};color:${m[2]}">${m[0]}</span>` : ''; };
+  async function loadEmailLinks() {
+    const d = await getJSON(api('/email-links?limit=100')).catch(() => null);
+    setDb(d && d.db_connected);
+    const info = $('#el-info'), list = $('#el-list');
+    if (!d || !d.db_connected) { if (list) list.innerHTML = offline(); return; }
+    info.innerHTML = `Предложений на проверку: <b>${esc(String(d.count || 0))}</b>. Агент нашёл письмо, но не уверен, к какому номеру оно относится. Подтвердите номер, отклоните ошибку или переназначьте на правильный номер.`;
+    const items = d.proposals || [];
+    list.innerHTML = items.length ? items.map(l => {
+      const amb = (l.ambiguous_phones || []).length ? ` <span class="muted">· другие кандидаты: ${esc((l.ambiguous_phones || []).join(', '))}</span>` : '';
+      return `<div class="td-info" style="margin:8px 0">
+        <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
+          <span>${elConf(l.confidence)} <b>${esc(l.client_name || 'клиент ?')}</b> · номер <b>${esc(l.phone_key || '—')}</b>${amb}</span>
+          <span class="muted">${l.last_message_at ? new Date(l.last_message_at).toLocaleDateString('ru-RU') : ''}${(l.signals || []).length ? ' · ' + esc((l.signals || []).join(' + ')) : ''}</span>
+        </div>
+        <div style="margin-top:6px">📧 ${esc(l.subject || '(без темы)')} <span class="muted">от ${esc(String(l.from_addr || '').replace(/<.*>/, '').slice(0, 40))}</span></div>
+        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn-ws" data-el="confirm" data-thread="${esc(l.gmail_thread_id)}" data-phone="${esc(l.phone_key || '')}">✓ Верно, это ${esc(l.phone_key || '')}</button>
+          <button class="btn-reject" data-el="reject" data-thread="${esc(l.gmail_thread_id)}" data-phone="${esc(l.phone_key || '')}">✕ Не этот клиент</button>
+          <button class="btn-mk" data-el="relink" data-thread="${esc(l.gmail_thread_id)}" data-phone="${esc(l.phone_key || '')}">↔ Другой номер…</button>
+        </div>
+      </div>`;
+    }).join('') : '<div class="empty">Нет писем, требующих уточнения. Уверенные связи агент записывает сам.</div>';
+  }
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-el]'); if (!b) return;
+    const { el, thread, phone } = b.dataset;
+    let body = { gmail_thread_id: thread, phone_key: phone, action: el };
+    if (el === 'relink') {
+      const to = prompt('Правильный номер WhatsApp клиента (кому на самом деле относится письмо):', '');
+      if (!to) return;
+      body = { gmail_thread_id: thread, from_phone: phone, to_phone: to, action: 'relink' };
+    }
+    const r = await postJSON(api('/email-links/decide'), body).catch(() => null);
+    toast(r && r.ok ? (el === 'reject' ? 'Отклонено' : el === 'relink' ? 'Переназначено' : 'Подтверждено') : 'Не удалось сохранить');
+    loadEmailLinks();
   });
 
   // действия: одобрить / отклонить / изменить / спросить

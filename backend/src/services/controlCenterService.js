@@ -621,9 +621,50 @@ async function taskInbox() {
   return { db_connected: true, ...r };
 }
 async function clientEmails(phone) {
+  // Cache-first: confirmed письмо↔номер links from the DB — instant, and (bonus) still works when
+  // Gmail is down. Only fall back to the live deep-match (which needs Gmail) when we have no
+  // confirmed link yet. The scheduled scan owns recording/auto-confirm (it sees all phones); the
+  // card's live fallback is display-only, never writes links.
+  try {
+    const links = await require('./emailLinkService').linksForPhone(phone, { status: 'confirmed' });
+    if (links && links.length) {
+      return {
+        db_connected: connected(), from_cache: true, found: true,
+        emails: links.map(l => ({
+          kind: 'gmail', thread_id: l.gmail_thread_id, subject: l.subject,
+          from: l.from_addr, to: l.to_addr, at: l.last_message_at,
+          confidence: l.confidence, signals: l.signals || [],
+          match_by: (l.signals || []).join(' + ') || 'подтверждённая связь',
+          has_attachment: false, linked: true,
+        })),
+        reason: null,
+      };
+    }
+  } catch (_) { /* no cache → live path below */ }
   if (!connected()) return { db_connected: false, emails: [] };
   const r = await require('./taskInboxService').clientEmails(phone);
-  return { db_connected: true, ...r };
+  return { db_connected: true, from_cache: false, ...r };
+}
+
+// ─── Email↔WhatsApp links: operator review queue + authoritative decisions (AUDITED) ──────────
+async function emailLinkProposals({ limit } = {}) {
+  if (!connected()) return { db_connected: false, proposals: [] };
+  const proposals = await require('./emailLinkService').proposals({ limit });
+  return { db_connected: true, proposals, count: proposals.length };
+}
+async function emailLinkDecide({ gmail_thread_id, phone_key, from_phone, to_phone, action, actor = {} } = {}) {
+  if (!connected()) throw errorUtils.validationError('Нет подключения к базе данных');
+  const svc = require('./emailLinkService');
+  const who = actor.username || 'operator';
+  let r;
+  if (action === 'confirm')      r = await svc.confirm(gmail_thread_id, phone_key, who);
+  else if (action === 'reject')  r = await svc.reject(gmail_thread_id, phone_key, who);
+  else if (action === 'relink')  r = await svc.relink({ gmail_thread_id, from_phone: from_phone || phone_key, to_phone, operator: who });
+  else throw errorUtils.validationError('action: confirm | reject | relink');
+  await audit.record({ user: actor.username, role: actor.role, action: `email_link_${action}`,
+    summary: `${actor.role === 'administrator' ? 'Администратор' : 'Оператор'} ${action} связь письма ${gmail_thread_id} ↔ ${to_phone || phone_key}`,
+    target_type: 'email_link', target_id: gmail_thread_id });
+  return r;
 }
 // Client card for a chosen application row (multi-match switcher). Reads Sheets, not Mongo — works
 // even when the DB is offline. sheet_row optional (default = newest match).
@@ -684,5 +725,5 @@ module.exports = {
   orderDangers, orderTimelineSteps, attention, orderTimeline, orderWorkspace, attentionCenter,
   // task inbox (WhatsApp-style to-do)
   taskInbox, taskThread, markThread, waSearch, markApplication, reopenApplication,
-  autoReplies, clientEmails, applicationCard,
+  autoReplies, clientEmails, applicationCard, emailLinkProposals, emailLinkDecide,
 };
