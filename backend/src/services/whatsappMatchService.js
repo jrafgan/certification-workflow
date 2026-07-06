@@ -75,7 +75,24 @@ function rankByPhone(phone, declarations = []) {
     // Unique phone→order resolution. Phone equality is exact on the canonical key.
     return { match_status: 'matched', match_confidence: 'HIGH', candidates, reason: 'unique_phone_match' };
   }
-  // Multiple orders share this phone — cannot pick one from phone alone.
+  // Multiple orders share this phone — cannot pick one from phone alone (order-identity: confirm on
+  // ambiguity, NEVER auto-assign). We only ADD advisory hints so the operator chooses faster: which
+  // orders are still active (status ≠ завершен/отказ) and which is the newest sheet row (the newest
+  // row is a recency SIGNAL, not a guarantee — labs work out of order). The most likely current order
+  // (newest still-active) is sorted first and flagged `likely_current`. match_status stays needs_review.
+  const { stageFor } = require('./clientEntityService');
+  const rowNum = (c) => { const n = parseInt(c.sheet_row_id, 10); return Number.isNaN(n) ? -1 : n; };
+  const newestRow = candidates.reduce((mx, c) => Math.max(mx, rowNum(c)), -1);
+  for (const c of candidates) {
+    const stage = stageFor(c.status);
+    c.stage     = stage;
+    c.is_active = stage !== 'done' && stage !== 'refusal';
+    c.is_newest = rowNum(c) === newestRow && newestRow >= 0;
+  }
+  // Display order: active first, then newest row first. Advisory only — does not change the outcome.
+  candidates.sort((a, b) => (Number(b.is_active) - Number(a.is_active)) || (rowNum(b) - rowNum(a)));
+  const current = candidates.find(c => c.is_active) || candidates[0];   // newest active, else newest
+  for (const c of candidates) c.likely_current = c === current;
   return {
     match_status: 'needs_review',
     match_confidence: 'MEDIUM',

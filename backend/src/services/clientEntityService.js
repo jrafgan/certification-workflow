@@ -76,10 +76,12 @@ async function buildByPhone(phone, deps = {}) {
 
   const safe = async (p, d) => { try { return await p; } catch (_) { return d; } };
 
-  // «Декларация» orders for this phone (J), verbatim status (N) + client (D).
+  // «Декларация» orders for this phone (J), verbatim status (N) + client (D). Keep the sheet row
+  // (index+2) — it is the order's identity and the recency signal used to flag the likely-current one.
   const declRows = (await safe(readDecl(), []))
-    .filter(r => matchKey(r[DECL_PHONE_COL]) === phone_key)
-    .map(r => ({ client: String(r[DECL_CLIENT_COL] || '').trim() || null, status: String(r[DECL_STATUS_COL] || '').trim() || null, payment: parsePayment(r[DECL_PAYMENT_COL]) }));
+    .map((r, i) => ({ sheet_row: i + 2, r }))
+    .filter(x => matchKey(x.r[DECL_PHONE_COL]) === phone_key)
+    .map(x => ({ sheet_row: x.sheet_row, client: String(x.r[DECL_CLIENT_COL] || '').trim() || null, status: String(x.r[DECL_STATUS_COL] || '').trim() || null, payment: parsePayment(x.r[DECL_PAYMENT_COL]) }));
 
   // «Новая форма» application for this phone.
   let application = null;
@@ -103,10 +105,17 @@ async function buildByPhone(phone, deps = {}) {
 
   // Orders with advisory stage + next actor + payment (col G).
   const orders = declRows.map(d => ({
+    sheet_row: d.sheet_row,
     client: d.client, status: d.status,
     paid: d.payment.paid, debt: d.payment.debt,
     stage: stageFor(d.status), next_actor: nextActorFor(d.status), next_actor_ru: ACTOR_RU[nextActorFor(d.status)] || null,
   }));
+  // Advisory «likely current» order when one phone has several: the newest still-active sheet row
+  // (order-identity signal, not a guarantee — labs work out of order). Never auto-assigns.
+  const activePool = orders.filter(o => o.stage !== 'done' && o.stage !== 'refusal');
+  const current = (activePool.length ? activePool : orders)
+    .reduce((best, o) => (o.sheet_row > (best ? best.sheet_row : -1) ? o : best), null);
+  for (const o of orders) o.likely_current = !!current && o === current;
   const active = orders.filter(o => o.stage !== 'done');
   const paid_total = orders.reduce((n, o) => n + (o.paid || 0), 0);
   const debt_total = orders.reduce((n, o) => n + (o.debt || 0), 0);

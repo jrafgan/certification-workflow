@@ -8,7 +8,7 @@
 // Run: node tests/whatsapp-lookup.test.js  (or: npm run test:whatsapp-lookup)
 
 const assert = require('assert');
-const { lookupByPhone } = require('../src/services/whatsappMatchService');
+const { lookupByPhone, rankByPhone } = require('../src/services/whatsappMatchService');
 
 let pass = 0, fail = 0; const failures = [];
 function test(name, fn) {
@@ -53,6 +53,36 @@ test('unmatched phone returns empty results and null last row', () => {
 test('too-short number never broad-matches', () => {
   const r = lookupByPhone('111', DECLS);
   assert.strictEqual(r.match_status, 'unmatched');
+});
+
+// ── needs_review disambiguation hints (advisory; never auto-assign) ──
+test('needs_review: active+newest sorted first and flagged likely_current', () => {
+  const decls = [
+    { sheet_row_id: '100', client_name: 'ИП X', phone: '700111222', status: 'завершен' },
+    { sheet_row_id: '300', client_name: 'ИП X', phone: '700111222', status: 'ждем макет' },     // active, newest
+    { sheet_row_id: '200', client_name: 'ИП X', phone: '700111222', status: 'на согласовании' }, // active
+  ];
+  const r = rankByPhone('700111222', decls);
+  assert.strictEqual(r.match_status, 'needs_review');
+  assert.strictEqual(r.candidates[0].sheet_row_id, '300');       // active + newest first
+  assert.strictEqual(r.candidates[0].likely_current, true);
+  assert.strictEqual(r.candidates.filter(c => c.likely_current).length, 1); // exactly one hint
+  const done = r.candidates.find(c => c.sheet_row_id === '100');
+  assert.strictEqual(done.is_active, false);
+  assert.strictEqual(done.likely_current, false);
+});
+test('needs_review: all done → likely_current falls back to the newest row', () => {
+  const decls = [
+    { sheet_row_id: '100', phone: '700111222', status: 'завершен' },
+    { sheet_row_id: '400', phone: '700111222', status: 'завершен' },
+  ];
+  const lc = rankByPhone('700111222', decls).candidates.find(c => c.likely_current);
+  assert.strictEqual(lc.sheet_row_id, '400');                    // newest, since none active
+});
+test('single match is untouched (no needs_review hints)', () => {
+  const r = rankByPhone('+996700111222', DECLS);
+  assert.strictEqual(r.match_status, 'matched');
+  assert.strictEqual(r.candidates[0].likely_current, undefined); // hints only on ambiguity
 });
 
 console.log(`\nWhatsApp Declaration lookup (Sprint 2): ${pass} passed, ${fail} failed`);
