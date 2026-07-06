@@ -26,7 +26,7 @@ test('+996 form matches the shortened stored form and returns full projection', 
   const r = lookupByPhone('+996700111222', DECLS);
   assert.strictEqual(r.match_status, 'matched');
   assert.strictEqual(r.match_count, 1);
-  assert.deepStrictEqual(r.results[0], { row: '500', client: 'ОсОО BACCI', document: 'сертификат', status: 'на согласовании' });
+  assert.deepStrictEqual(r.results[0], { row: '500', order_id: 'o3', client: 'ОсОО BACCI', document: 'сертификат', status: 'на согласовании' });
 });
 
 test('shortened inbound number matches +996 stored form (symmetric)', () => {

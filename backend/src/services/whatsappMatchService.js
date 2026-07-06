@@ -84,6 +84,22 @@ function rankByPhone(phone, declarations = []) {
   };
 }
 
+// orderIdsByRows — resolve Mongo Order._id for a set of «Декларация» sheet rows. Orders are
+// materialized by declarationOrderService.sync() keyed by Order.sheet_row_id (see memory
+// email-tasks-empty-orders), so a matched sheet row can now point at a real Order — that is what
+// makes the panel's «Открыть заказ» work. Best-effort: an empty map if the model/DB is unavailable
+// (matching still succeeds on the sheet row; only the deep-link is missing).
+async function orderIdsByRows(rows, deps = {}) {
+  const uniq = [...new Set((rows || []).map(r => (r != null ? String(r) : '')).filter(Boolean))];
+  if (!uniq.length) return new Map();
+  try {
+    const { Order } = ('Order' in deps) ? deps : require('../models');
+    if (!Order) return new Map();
+    const docs = await Order.find({ sheet_row_id: { $in: uniq } }).select('_id sheet_row_id').lean();
+    return new Map(docs.map(o => [String(o.sheet_row_id), o._id]));
+  } catch (_) { return new Map(); }
+}
+
 // matchMessage(messageId) — DB-backed: loads the message, finds candidate
 // Declarations by phone key, writes the matching outcome back onto the message.
 // Read/replica-only: it reads the Declaration replica and updates the
@@ -106,10 +122,16 @@ async function matchMessage(messageId, deps = {}) {
   }
 
   const result = rankByPhone(msg.from_phone || msg.phone_key, decls);
+  // Deep-link: fill each candidate's order_id from the materialized Mongo Order (by sheet row).
+  if (result.candidates.length) {
+    const byRow = await orderIdsByRows(result.candidates.map(c => c.sheet_row_id), deps);
+    for (const c of result.candidates) if (!c.order_id && byRow.has(String(c.sheet_row_id))) c.order_id = byRow.get(String(c.sheet_row_id));
+  }
   msg.match_status      = result.match_status;
   msg.match_confidence  = result.match_confidence;
   msg.candidates        = result.candidates;
-  // No Mongo Order exists — the matched entity is the sheet row (matched_sheet_row).
+  // The matched entity is the sheet row (matched_sheet_row); matched_order_id is the Mongo Order
+  // when it has been materialized (else null — the task inbox still shows the order from the sheet).
   msg.matched_order_id  = result.match_status === 'matched' ? (result.candidates[0].order_id || null) : null;
   msg.matched_sheet_row = result.match_status === 'matched' ? (result.candidates[0].sheet_row_id || null) : null;
   await msg.save();
@@ -140,6 +162,7 @@ function lookupByPhone(phone, declarations = []) {
   const ranked = rankByPhone(phone, declarations);
   const results = ranked.candidates.map(c => ({
     row:      c.sheet_row_id,
+    order_id: c.order_id || null,          // Mongo Order._id when materialized (filled by the DB wrapper)
     client:   c.client_name,
     document: c.document_type,
     status:   c.status,
@@ -176,7 +199,15 @@ async function lookupOrdersByPhone(phone, deps = {}) {
     const { Declaration } = deps.Declaration ? deps : require('../models/Declaration');
     decls = await Declaration.find({}).lean();
   }
-  return lookupByPhone(phone, decls);
+  const base = lookupByPhone(phone, decls);
+  // Deep-link each matched row to its materialized Mongo Order so «Открыть заказ» works.
+  if (base.results.length) {
+    const byRow = await orderIdsByRows(base.results.map(r => r.row), deps);
+    for (const r of base.results) if (!r.order_id && byRow.has(String(r.row))) r.order_id = byRow.get(String(r.row));
+    if (base.last_declaration_row && byRow.has(String(base.last_declaration_row.row)))
+      base.last_declaration_row.order_id = byRow.get(String(base.last_declaration_row.row));
+  }
+  return base;
 }
 
 module.exports = { rankByPhone, matchMessage, rematchAll, lookupByPhone, lookupOrdersByPhone, liveDeclarations, mapDeclRows };
