@@ -21,6 +21,7 @@ const { InboxThreadState } = require('./InboxThreadState');
 const { NewApplicationProposal, NEW_APPLICATION_PROPOSAL_STATUSES } = require('./NewApplicationProposal');
 const { WaAutoReply, WA_AUTOREPLY_DECISIONS, WA_AUTOREPLY_MODES, WA_AUTOREPLY_KINDS } = require('./WaAutoReply');
 const { ApplicationOverride, APPLICATION_OVERRIDE_REASONS, APPLICATION_OVERRIDE_STATUSES } = require('./ApplicationOverride');
+const { EmailLink, EMAIL_LINK_STATUSES, EMAIL_LINK_SOURCES, EMAIL_LINK_CONFIDENCE } = require('./EmailLink');
 
 module.exports = {
   Order,
@@ -41,6 +42,10 @@ module.exports = {
   ApplicationOverride,
   APPLICATION_OVERRIDE_REASONS,
   APPLICATION_OVERRIDE_STATUSES,
+  EmailLink,
+  EMAIL_LINK_STATUSES,
+  EMAIL_LINK_SOURCES,
+  EMAIL_LINK_CONFIDENCE,
   Declaration,
   LabCommThread,
   WhatsAppMessage,
